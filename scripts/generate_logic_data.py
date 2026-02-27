@@ -11,7 +11,7 @@ Uses nl_renderer.py for natural language rendering with:
 - Explicit variable names in quantification (for all x, there exist y)
 - Approved logical terms only
 
-Atomic propositions are generated using Anthropic Claude API (pooled approach).
+Atomic propositions are generated using OpenAI API (pooled approach).
 Only 5 API calls are made to generate a pool, then thousands of examples
 are created by sampling from this pool.
 
@@ -53,7 +53,7 @@ class LogicDataGenerator:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "gpt-5.2-2025-12-11",
         temperature: float = 0.9,
         use_fallback: bool = False,
         min_depth: int = 2,
@@ -151,7 +151,7 @@ class LogicDataGenerator:
         return Annotation(
             id=str(uuid.uuid4()),
             premises=premise_objects,
-            conclusion=rendered["conclusion"],
+            content=rendered["conclusion"],
             annotator_id=f"logic_generator_{inference.pattern.value}",
             verifier_notes=json.dumps({
                 "pattern": inference.pattern.value,
@@ -251,7 +251,7 @@ Examples:
   python scripts/generate_logic_data.py --logic-order first_order -n 500
 
   # Custom API settings
-  ANTHROPIC_API_KEY=sk-... python scripts/generate_logic_data.py -n 1000 --model claude-sonnet-4-20250514
+  OPENAI_API_KEY=sk-... python scripts/generate_logic_data.py -n 1000 --model gpt-5.2-2025-12-11
 
 Available inference patterns for --inference-patterns:
   Propositional: modus_ponens, modus_tollens, hypothetical_syllogism, disjunctive_syllogism,
@@ -277,13 +277,13 @@ Available inference patterns for --inference-patterns:
         "--api-key",
         type=str,
         default=None,
-        help="Anthropic API key (or set ANTHROPIC_API_KEY env var)"
+        help="OpenAI API key (or set OPENAI_API_KEY env var)"
     )
     parser.add_argument(
         "--model",
         type=str,
-        default="claude-sonnet-4-20250514",
-        help="Claude model to use for pool generation (default: claude-sonnet-4-20250514)"
+        default="gpt-5.2-2025-12-11",
+        help="OpenAI model to use for pool generation (default: gpt-5.2-2025-12-11)"
     )
     parser.add_argument(
         "--temperature",
@@ -368,8 +368,8 @@ Available inference patterns for --inference-patterns:
         else:
             print(f"Error initializing generator: {e}")
             print("\nOptions:")
-            print("  1. Install anthropic: pip install anthropic")
-            print("  2. Set ANTHROPIC_API_KEY environment variable or use --api-key")
+            print("  1. Install openai: pip install openai")
+            print("  2. Set OPENAI_API_KEY environment variable or use --api-key")
             print("  3. Use --use-fallback to generate without API calls")
             sys.exit(1)
 
@@ -429,7 +429,7 @@ Available inference patterns for --inference-patterns:
             print(f"\nSample output:")
             sample = annotations[0]
             print(f"  Premises: {[p.text for p in sample.premises]}")
-            print(f"  Conclusion: {sample.conclusion}")
+            print(f"  Content: {sample.content}")
             if sample.verifier_notes:
                 notes = json.loads(sample.verifier_notes)
                 print(f"  Formal: {notes.get('full_formal', 'N/A')}")

@@ -239,7 +239,7 @@ class DataLoader:
         if "context" in example or "premises" in example:
             context = example.get("context", "")
             premises = example.get("premises", [])
-            conclusion = example.get("conclusion", {})
+            conclusion = example.get("content") or example.get("conclusion", {})
 
             if isinstance(conclusion, dict):
                 conclusion_text = conclusion.get("text", "")
@@ -463,7 +463,7 @@ def test_format_premises_conclusion(results: TestResults):
             {"text": "All cats are mammals"},
             {"text": "Fluffy is a cat"}
         ],
-        "conclusion": {"text": "Fluffy is a mammal"}
+        "content": {"text": "Fluffy is a mammal"}
     }
 
     full_text, conclusion = loader.format_example(example)
@@ -585,7 +585,7 @@ def test_conclusion_only_loss_masking(results: TestResults):
 
     example = {
         "premises": ["Premise one", "Premise two"],
-        "conclusion": "The conclusion"
+        "content": "The conclusion"
     }
 
     full_text, conclusion = loader.format_example(example)
@@ -627,7 +627,7 @@ def test_full_text_training(results: TestResults):
 
     example = {
         "premises": ["Premise one"],
-        "conclusion": "The conclusion"
+        "content": "The conclusion"
     }
 
     full_text, _ = loader.format_example(example)
@@ -657,9 +657,9 @@ def test_jsonl_loading(results: TestResults):
 
     # Create temp JSONL file
     with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
-        f.write('{"premises": ["P1"], "conclusion": "C1"}\n')
-        f.write('{"premises": ["P2"], "conclusion": "C2"}\n')
-        f.write('{"premises": ["P3"], "conclusion": "C3"}\n')
+        f.write('{"premises": ["P1"], "content": "C1"}\n')
+        f.write('{"premises": ["P2"], "content": "C2"}\n')
+        f.write('{"premises": ["P3"], "content": "C3"}\n')
         temp_path = f.name
 
     try:
@@ -669,7 +669,7 @@ def test_jsonl_loading(results: TestResults):
         else:
             results.add_fail("JSONL loading correct count", f"Got {len(data)}")
 
-        if data[0]["conclusion"] == "C1":
+        if data[0]["content"] == "C1":
             results.add_pass("JSONL data parsed correctly")
         else:
             results.add_fail("JSONL data parsed correctly", f"Got {data[0]}")
@@ -688,8 +688,8 @@ def test_json_loading(results: TestResults):
     # Create temp JSON file
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump([
-            {"premises": ["P1"], "conclusion": "C1"},
-            {"premises": ["P2"], "conclusion": "C2"}
+            {"premises": ["P1"], "content": "C1"},
+            {"premises": ["P2"], "content": "C2"}
         ], f)
         temp_path = f.name
 
@@ -714,7 +714,7 @@ def test_empty_premises(results: TestResults):
     # Empty premises
     example = {
         "premises": [],
-        "conclusion": "Still valid"
+        "content": "Still valid"
     }
 
     full_text, conclusion = loader.format_example(example)
@@ -724,10 +724,10 @@ def test_empty_premises(results: TestResults):
     else:
         results.add_fail("Empty premises handled", f"Got '{conclusion}'")
 
-    # String conclusion (not dict)
+    # String content (not dict)
     example = {
         "premises": ["P1"],
-        "conclusion": "String conclusion"
+        "content": "String conclusion"
     }
 
     _, conclusion = loader.format_example(example)
@@ -750,7 +750,7 @@ def test_custom_markers(results: TestResults):
 
     example = {
         "premises": ["P1"],
-        "conclusion": "Custom marker test"
+        "content": "Custom marker test"
     }
 
     full_text, _ = loader.format_example(example)

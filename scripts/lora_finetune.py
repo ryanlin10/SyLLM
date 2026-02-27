@@ -297,18 +297,18 @@ class DataLoader:
 
     def _extract_premises_conclusion(self, example: Dict[str, Any]) -> Tuple[List[str], str]:
         """
-        Extract premises and conclusion from the Annotation format.
+        Extract premises and content/conclusion from the Annotation format.
 
         Expected format from generate_logic_data.py:
         {
             "id": "uuid",
             "premises": [{"id": "p1", "text": "..."}, {"id": "p2", "text": "..."}],
-            "conclusion": "conclusion text",
+            "content": "conclusion text",
             ...
         }
 
         Returns:
-            Tuple of (list of premise texts, conclusion text)
+            Tuple of (list of premise texts, content/conclusion text)
         """
         premises = []
         conclusion = ""
@@ -324,8 +324,8 @@ class DataLoader:
                 else:
                     premises.append(str(p))
 
-        # Extract conclusion - either string or dict with "text" field
-        conc = example.get("conclusion", "")
+        # Extract content (or legacy "conclusion") - either string or dict with "text" field
+        conc = example.get("content") or example.get("conclusion", "")
         if isinstance(conc, dict) and "text" in conc:
             conclusion = conc["text"]
         else:
@@ -342,8 +342,16 @@ class DataLoader:
         return " ".join(parts)
 
     def _format_assistant_message(self, conclusion: str) -> str:
-        """Format conclusion as assistant message with <CONCLUSION> tags."""
-        return f"<CONCLUSION> {conclusion.strip()} </CONCLUSION>"
+        """Format conclusion as assistant message.
+
+        If the conclusion already contains proof-trace tags (e.g. from a
+        Stage 1 chain data proof trace), use it as-is.  Otherwise wrap in
+        ``<CONCLUSION>`` tags.
+        """
+        stripped = conclusion.strip()
+        if "<CONCLUSION>" in stripped or "<PREMISE>" in stripped:
+            return stripped
+        return f"<CONCLUSION> {stripped} </CONCLUSION>"
 
     def format_example(self, example: Dict[str, Any]) -> Tuple[str, str]:
         """
@@ -945,7 +953,7 @@ Training Mode:
   Uses Mistral chat template for proper instruction format.
 
   Input format (from generate_logic_data.py):
-    {"premises": [{"id": "p1", "text": "..."}, ...], "conclusion": "..."}
+    {"premises": [{"id": "p1", "text": "..."}, ...], "content": "..."}
 
   Converted to Mistral chat format:
     User: <PREMISE> premise1 </PREMISE> <PREMISE> premise2 </PREMISE> ...
