@@ -75,10 +75,10 @@ class DataCurator:
             if has_evidence:
                 stats["with_evidence"] += 1
             
-            # Conclusion type
-            conclusion = ann.get("conclusion", {})
-            if isinstance(conclusion, dict):
-                conclusion_type = conclusion.get("type", "entailment")
+            # Content/conclusion type
+            content = ann.get("content") or ann.get("conclusion", {})
+            if isinstance(content, dict):
+                conclusion_type = content.get("type", "entailment")
             else:
                 conclusion_type = "entailment"
             stats["conclusion_types"][conclusion_type] += 1
@@ -129,12 +129,12 @@ class DataCurator:
         target_counts: Optional[Dict[str, int]] = None
     ) -> List[Dict[str, Any]]:
         """Balance dataset by conclusion type."""
-        # Group by conclusion type
+        # Group by content/conclusion type
         by_type: Dict[str, List[Dict[str, Any]]] = {}
         for ann in annotations:
-            conclusion = ann.get("conclusion", {})
-            if isinstance(conclusion, dict):
-                ctype = conclusion.get("type", "entailment")
+            content = ann.get("content") or ann.get("conclusion", {})
+            if isinstance(content, dict):
+                ctype = content.get("type", "entailment")
             else:
                 ctype = "entailment"
             

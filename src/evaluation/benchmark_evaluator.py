@@ -1,6 +1,10 @@
 """Core benchmark evaluation engine."""
 
+import os
+import sys
 import time
+import tempfile
+import subprocess
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -18,6 +22,11 @@ from .answer_parser import (
     parse_multiple_choice_answer,
     parse_gsm8k_answer,
     parse_true_false_unknown,
+    parse_code_answer,
+    parse_math_answer,
+    normalize_math_answer,
+    parse_triviaqa_answer,
+    normalize_answer,
 )
 from .statistics import bootstrap_confidence_interval, compute_normalized_score
 
@@ -98,6 +107,22 @@ ENTAILMENT_SYSTEM_PROMPT = (
     "follows from the given premises. Answer with True, False, or Unknown."
 )
 
+MATH_SYSTEM_PROMPT = (
+    "You are an expert mathematician. Solve the problem step by step. "
+    "Put your final answer inside \\boxed{}."
+)
+
+TRIVIAQA_SYSTEM_PROMPT = (
+    "You are a knowledgeable assistant. Answer factual questions concisely. "
+    "Respond with just the answer, no explanation."
+)
+
+CODE_GENERATION_SYSTEM_PROMPT = (
+    "You are an expert Python programmer. Complete the given function based on "
+    "the description and any provided examples. Output only valid Python code "
+    "with no extra explanation."
+)
+
 
 def _format_mc_example(item: BenchmarkItem, include_answer: bool = False) -> str:
     """Format a single multiple-choice example."""
@@ -142,6 +167,44 @@ def _format_entailment_example(
     return "\n".join(lines)
 
 
+def _format_math_example(item: BenchmarkItem, include_answer: bool = False) -> str:
+    """Format a MATH benchmark problem."""
+    lines = [f"Problem: {item.question}"]
+    if include_answer:
+        solution = item.metadata.get("full_solution", "")
+        if solution:
+            lines.append(f"Solution: {solution}")
+        else:
+            lines.append(f"Answer: \\boxed{{{item.correct_answer_text}}}")
+    else:
+        lines.append("Solution:")
+    return "\n".join(lines)
+
+
+def _format_triviaqa_example(
+    item: BenchmarkItem, include_answer: bool = False
+) -> str:
+    """Format a TriviaQA question."""
+    lines = [f"Question: {item.question}"]
+    if include_answer:
+        lines.append(f"Answer: {item.correct_answer_text}")
+    else:
+        lines.append("Answer:")
+    return "\n".join(lines)
+
+
+def _format_code_example(item: BenchmarkItem, include_answer: bool = False) -> str:
+    """Format a code generation example (HumanEval / MBPP).
+
+    For HumanEval the prompt already contains the function signature + docstring.
+    For MBPP the prompt is a task description; few-shot answers show the solution.
+    """
+    if include_answer:
+        code = item.correct_answer_text or item.metadata.get("code", "")
+        return f"{item.question}\n{code}"
+    return item.question
+
+
 def format_prompt(
     item: BenchmarkItem,
     few_shot: List[BenchmarkItem],
@@ -153,9 +216,16 @@ def format_prompt(
     if config.benchmark_type == BenchmarkType.MULTIPLE_CHOICE:
         formatter = _format_mc_example
     elif config.benchmark_type == BenchmarkType.GENERATION:
-        formatter = _format_gsm8k_example
+        if config.key == "math":
+            formatter = _format_math_example
+        elif config.key == "triviaqa":
+            formatter = _format_triviaqa_example
+        else:
+            formatter = _format_gsm8k_example  # GSM8K default
     elif config.benchmark_type == BenchmarkType.ENTAILMENT:
         formatter = _format_entailment_example
+    elif config.benchmark_type == BenchmarkType.CODE_GENERATION:
+        formatter = _format_code_example
     else:
         formatter = _format_mc_example
 
@@ -174,10 +244,74 @@ def get_system_prompt(config: BenchmarkConfig) -> str:
     if config.benchmark_type == BenchmarkType.MULTIPLE_CHOICE:
         return MC_SYSTEM_PROMPT
     elif config.benchmark_type == BenchmarkType.GENERATION:
+        if config.key == "math":
+            return MATH_SYSTEM_PROMPT
+        elif config.key == "triviaqa":
+            return TRIVIAQA_SYSTEM_PROMPT
         return GENERATION_SYSTEM_PROMPT
     elif config.benchmark_type == BenchmarkType.ENTAILMENT:
         return ENTAILMENT_SYSTEM_PROMPT
+    elif config.benchmark_type == BenchmarkType.CODE_GENERATION:
+        return CODE_GENERATION_SYSTEM_PROMPT
     return MC_SYSTEM_PROMPT
+
+
+# =============================================================================
+# Code execution helpers
+# =============================================================================
+
+
+def _run_in_subprocess(code: str, timeout: int = 10) -> bool:
+    """Write code to a temp file and execute it; return True if exit code is 0."""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, dir=tempfile.gettempdir()
+        ) as f:
+            f.write(code)
+            fname = f.name
+        result = subprocess.run(
+            [sys.executable, fname],
+            capture_output=True,
+            timeout=timeout,
+        )
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+    except Exception:
+        return False
+    finally:
+        try:
+            os.unlink(fname)
+        except OSError:
+            pass
+
+
+def _execute_humaneval(
+    generated: str, test: str, entry_point: str, timeout: int = 10
+) -> bool:
+    """Evaluate a HumanEval completion via subprocess execution.
+
+    Combines the generated code with the provided test harness and calls
+    check(<entry_point>).  Returns True if all assertions pass.
+    """
+    code = parse_code_answer(generated, entry_point)
+    # HumanEval test functions are named check(candidate)
+    full_program = f"{code}\n\n{test}\n\ncheck({entry_point})\n"
+    return _run_in_subprocess(full_program, timeout=timeout)
+
+
+def _execute_mbpp(
+    generated: str, test_list: List[str], test_imports: List[str], timeout: int = 10
+) -> bool:
+    """Evaluate an MBPP completion via subprocess execution.
+
+    Runs the generated code followed by the assert-based test list.
+    """
+    code = parse_code_answer(generated)
+    imports = "\n".join(test_imports)
+    assertions = "\n".join(test_list)
+    full_program = f"{imports}\n{code}\n{assertions}\n"
+    return _run_in_subprocess(full_program, timeout=timeout)
 
 
 # =============================================================================
@@ -246,6 +380,9 @@ class BenchmarkEvaluator:
         prompts = [format_prompt(item, few_shot, config) for item in items]
         system_prompt = get_system_prompt(config)
 
+        # Use per-benchmark token override if set, else fall back to evaluator default
+        effective_max_tokens = config.max_tokens_override or self.max_tokens
+
         # Run inference in batches
         results: List[SingleResult] = []
         total_start = time.time()
@@ -259,7 +396,7 @@ class BenchmarkEvaluator:
             outputs = self.predictor.generate_batch(
                 messages=batch_prompts,
                 system_prompt=system_prompt,
-                max_tokens=self.max_tokens,
+                max_tokens=effective_max_tokens,
                 temperature=self.temperature,
                 top_p=1.0,
                 use_lora=use_lora,
@@ -268,30 +405,11 @@ class BenchmarkEvaluator:
             per_item_latency = batch_latency / len(batch_prompts)
 
             for item, output in zip(batch_items, outputs):
-                predicted, confidence = self._parse_answer(output, item, config)
-                correct = predicted == item.correct_answer
-
-                # For GSM8K, compare numerical values
-                if config.benchmark_type == BenchmarkType.GENERATION:
-                    pred_num = parse_gsm8k_answer(output)
-                    try:
-                        expected_num = float(item.correct_answer_text)
-                        correct = pred_num is not None and abs(
-                            pred_num - expected_num
-                        ) < 1e-6
-                    except (ValueError, TypeError):
-                        correct = False
-                    confidence = 1.0 if pred_num is not None else 0.0
-
-                predicted_text = (
-                    chr(ord("A") + predicted)
-                    if config.benchmark_type == BenchmarkType.MULTIPLE_CHOICE
-                    else (
-                        item.choices[predicted]
-                        if predicted < len(item.choices)
-                        else str(predicted)
-                    )
+                predicted, confidence, correct = self._evaluate_item(
+                    output, item, config
                 )
+
+                predicted_text = self._predicted_text(predicted, item, config)
 
                 results.append(
                     SingleResult(
@@ -364,18 +482,112 @@ class BenchmarkEvaluator:
 
         return comparisons
 
-    def _parse_answer(
+    def _evaluate_item(
         self, output: str, item: BenchmarkItem, config: BenchmarkConfig
-    ) -> tuple:
-        """Parse model output based on benchmark type."""
+    ):
+        """Return (predicted_answer, confidence, correct) for one benchmark item."""
+        btype = config.benchmark_type
+
+        # ----- Multiple Choice -----
+        if btype == BenchmarkType.MULTIPLE_CHOICE:
+            predicted, confidence = parse_multiple_choice_answer(
+                output, config.num_choices
+            )
+            correct = predicted == item.correct_answer
+            return predicted, confidence, correct
+
+        # ----- Entailment (True/False/Unknown) -----
+        if btype == BenchmarkType.ENTAILMENT:
+            predicted = parse_true_false_unknown(output)
+            correct = predicted == item.correct_answer
+            return predicted, 1.0, correct
+
+        # ----- Generation -----
+        if btype == BenchmarkType.GENERATION:
+            return self._evaluate_generation(output, item, config)
+
+        # ----- Code Generation -----
+        if btype == BenchmarkType.CODE_GENERATION:
+            return self._evaluate_code(output, item, config)
+
+        return 0, 0.0, False
+
+    def _evaluate_generation(
+        self, output: str, item: BenchmarkItem, config: BenchmarkConfig
+    ):
+        """Dispatch generation correctness by benchmark key."""
+        key = config.key
+
+        # GSM8K — numeric answer extraction
+        if key == "gsm8k":
+            pred_num = parse_gsm8k_answer(output)
+            try:
+                expected_num = float(item.correct_answer_text)
+                correct = pred_num is not None and abs(pred_num - expected_num) < 1e-6
+            except (ValueError, TypeError):
+                correct = False
+            confidence = 1.0 if pred_num is not None else 0.0
+            return -1, confidence, correct
+
+        # MATH — LaTeX boxed answer extraction + normalized comparison
+        if key == "math":
+            pred_ans = normalize_math_answer(parse_math_answer(output))
+            gold_ans = normalize_math_answer(item.correct_answer_text)
+            correct = bool(pred_ans) and pred_ans == gold_ans
+            # Try numeric fallback (e.g., "6" vs "6.0")
+            if not correct and pred_ans and gold_ans:
+                try:
+                    correct = abs(float(pred_ans) - float(gold_ans)) < 1e-6
+                except (ValueError, TypeError):
+                    pass
+            confidence = 1.0 if pred_ans else 0.0
+            return -1, confidence, correct
+
+        # TriviaQA — alias-based string matching
+        if key == "triviaqa":
+            pred_text = parse_triviaqa_answer(output)
+            aliases = [
+                normalize_answer(a)
+                for a in item.metadata.get("aliases", [item.correct_answer_text])
+            ]
+            correct = pred_text in aliases
+            confidence = 1.0 if pred_text else 0.0
+            return -1, confidence, correct
+
+        # Unknown generation benchmark — fall back to no-op
+        return -1, 0.0, False
+
+    def _evaluate_code(
+        self, output: str, item: BenchmarkItem, config: BenchmarkConfig
+    ):
+        """Execute generated code against test suite; return pass/fail."""
+        key = config.key
+
+        if key == "humaneval":
+            test = item.metadata.get("test", "")
+            entry_point = item.metadata.get("entry_point", "")
+            correct = _execute_humaneval(output, test, entry_point)
+        elif key == "mbpp":
+            test_list = item.metadata.get("test_list", [])
+            test_imports = item.metadata.get("test_imports", [])
+            correct = _execute_mbpp(output, test_list, test_imports)
+        else:
+            correct = False
+
+        confidence = 1.0  # Execution verdict is definitive
+        return -1, confidence, correct
+
+    @staticmethod
+    def _predicted_text(predicted: int, item: BenchmarkItem, config: BenchmarkConfig) -> str:
+        """Convert predicted index to a display string."""
         if config.benchmark_type == BenchmarkType.MULTIPLE_CHOICE:
-            return parse_multiple_choice_answer(output, config.num_choices)
-        elif config.benchmark_type == BenchmarkType.GENERATION:
-            # GSM8K: handled separately in evaluate_single_benchmark
-            return 0, 0.0
-        elif config.benchmark_type == BenchmarkType.ENTAILMENT:
-            return parse_true_false_unknown(output), 1.0
-        return 0, 0.0
+            return chr(ord("A") + predicted) if predicted >= 0 else "?"
+        if config.benchmark_type in (BenchmarkType.GENERATION, BenchmarkType.CODE_GENERATION):
+            return str(predicted)  # raw index; raw_output is the actual prediction
+        # Entailment
+        if predicted < len(item.choices):
+            return item.choices[predicted]
+        return str(predicted)
 
     def _aggregate_results(
         self,

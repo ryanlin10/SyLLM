@@ -1,16 +1,17 @@
-"""Generate atomic propositions using Anthropic Claude API with pooling."""
+"""Generate atomic propositions using OpenAI API with pooling."""
 
 import os
 import json
 import random
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
 try:
-    import anthropic
+    import openai
 except ImportError:
-    anthropic = None
+    openai = None
 
 
 @dataclass
@@ -64,13 +65,57 @@ class PropositionPool:
         """Sample n distinct categories."""
         return random.sample(self.categories, min(n, len(self.categories)))
 
+    # -- Serialization for caching and cross-process transfer ----------------
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize pool to a plain dict (JSON-safe)."""
+        def _ap_list(items: List[AtomicProposition]) -> List[Dict[str, Any]]:
+            return [{"text": a.text, "topic": a.topic, "is_predicate": a.is_predicate}
+                    for a in items]
+        return {
+            "propositions": _ap_list(self.propositions),
+            "predicates": _ap_list(self.predicates),
+            "relations": _ap_list(self.relations),
+            "categories": _ap_list(self.categories),
+            "entities": self.entities.names,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "PropositionPool":
+        """Reconstruct a pool from a dict produced by ``to_dict``."""
+        def _parse_ap(items: List[Dict[str, Any]]) -> List[AtomicProposition]:
+            return [AtomicProposition(text=i["text"], topic=i.get("topic", ""),
+                                     is_predicate=i.get("is_predicate", False))
+                    for i in items]
+        return cls(
+            propositions=_parse_ap(d.get("propositions", [])),
+            predicates=_parse_ap(d.get("predicates", [])),
+            relations=_parse_ap(d.get("relations", [])),
+            categories=_parse_ap(d.get("categories", [])),
+            entities=EntityPool(names=d.get("entities", [])),
+        )
+
+    def save(self, path: str) -> None:
+        """Save pool to a JSON file."""
+        from pathlib import Path
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump(self.to_dict(), fh, indent=2)
+
+    @classmethod
+    def load(cls, path: str) -> "PropositionPool":
+        """Load pool from a JSON file."""
+        with open(path, "r", encoding="utf-8") as fh:
+            return cls.from_dict(json.load(fh))
+
 
 @dataclass
 class GeneratorConfig:
     """Configuration for atomic proposition generation."""
     api_key: Optional[str] = None
-    model: str = "claude-sonnet-4-20250514"
-    max_tokens: int = 4096
+    model: str = "gpt-5.2-2025-12-11"
+    max_tokens: int = 16384
     temperature: float = 0.9
     retry_attempts: int = 3
     retry_delay: float = 1.0
@@ -103,7 +148,7 @@ TOPIC_CATEGORIES = [
 
 
 class AtomicPropositionGenerator:
-    """Generate pools of atomic propositions using Claude API."""
+    """Generate pools of atomic propositions using OpenAI API."""
 
     def __init__(self, config: Optional[GeneratorConfig] = None):
         self.config = config or GeneratorConfig()
@@ -112,26 +157,34 @@ class AtomicPropositionGenerator:
         self._initialize_client()
 
     def _initialize_client(self):
-        """Initialize Anthropic client."""
-        if anthropic is None:
-            raise ImportError("anthropic package not installed. Run: pip install anthropic")
+        """Initialize OpenAI client."""
+        if openai is None:
+            raise ImportError("openai package not installed. Run: pip install openai")
 
-        api_key = self.config.api_key or os.environ.get("ANTHROPIC_API_KEY")
+        api_key = self.config.api_key or os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY not set. Set via config or environment variable.")
+            raise ValueError("OPENAI_API_KEY not set. Set via config or environment variable.")
 
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self.client = openai.OpenAI(api_key=api_key)
 
     def generate_pool(
         self,
         topics: Optional[List[str]] = None,
-        verbose: bool = True
+        verbose: bool = True,
+        skip_categories: bool = False,
     ) -> PropositionPool:
         """
         Generate a pool of atomic propositions with a single API call per category.
 
         This makes only a few API calls total, then all examples are generated
         by sampling from this pool.
+
+        Args:
+            topics: Topic categories to generate propositions for.
+            verbose: Print progress messages.
+            skip_categories: If True, skip generating categories (saves one
+                API call).  Categories are only used by template-based
+                inference generation, not by the chain generator.
         """
         topics = topics or TOPIC_CATEGORIES
         pool = PropositionPool()
@@ -139,47 +192,62 @@ class AtomicPropositionGenerator:
         if verbose:
             print("Generating proposition pool...")
 
-        # 1. Generate full propositions (for propositional logic)
-        if verbose:
-            print("  Generating propositions...")
-        propositions = self._generate_propositions(topics)
-        pool.propositions = propositions
-        if verbose:
-            print(f"    Generated {len(propositions)} propositions")
+        # All generation calls are independent — run them concurrently.
+        tasks = {
+            "propositions": ("Generating propositions...", lambda: self._generate_propositions(topics)),
+            "predicates": ("Generating predicates...", lambda: self._generate_predicates(topics)),
+            "relations": ("Generating relations...", lambda: self._generate_relations()),
+            "entities": ("Generating entity names...", lambda: self._generate_entities()),
+        }
+        if not skip_categories:
+            tasks["categories"] = ("Generating categories...", lambda: self._generate_categories())
 
-        # 2. Generate predicates (for first-order logic)
-        if verbose:
-            print("  Generating predicates...")
-        predicates = self._generate_predicates(topics)
-        pool.predicates = predicates
-        if verbose:
-            print(f"    Generated {len(predicates)} predicates")
+        try:
+            results: Dict[str, Any] = {}
+            if verbose:
+                print("  Submitting API calls in parallel...")
+            with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+                future_to_key = {
+                    executor.submit(fn): key
+                    for key, (_desc, fn) in tasks.items()
+                }
+                for future in as_completed(future_to_key):
+                    key = future_to_key[future]
+                    results[key] = future.result()
+                    desc = tasks[key][0]
+                    count = len(results[key])
+                    if verbose:
+                        print(f"    {desc} done ({count} items)")
+        except Exception as exc:
+            # Fall back to sequential on any thread-pool failure.
+            if verbose:
+                print(f"  Parallel generation failed ({exc}), falling back to sequential...")
+            results = {}
+            for key, (desc, fn) in tasks.items():
+                if verbose:
+                    print(f"  {desc}")
+                results[key] = fn()
+                if verbose:
+                    print(f"    Generated {len(results[key])} items")
 
-        # 3. Generate relations (for relational reasoning)
-        if verbose:
-            print("  Generating relations...")
-        relations = self._generate_relations()
-        pool.relations = relations
-        if verbose:
-            print(f"    Generated {len(relations)} relations")
-
-        # 4. Generate categories (for universal statements)
-        if verbose:
-            print("  Generating categories...")
-        categories = self._generate_categories()
-        pool.categories = categories
-        if verbose:
-            print(f"    Generated {len(categories)} categories")
-
-        # 5. Generate entity names
-        if verbose:
-            print("  Generating entity names...")
-        entities = self._generate_entities()
-        pool.entities = EntityPool(names=entities)
-        if verbose:
-            print(f"    Generated {len(entities)} entity names")
+        pool.propositions = results["propositions"]
+        pool.predicates = results["predicates"]
+        pool.relations = results["relations"]
+        pool.entities = EntityPool(names=results["entities"])
+        if "categories" in results:
+            pool.categories = results["categories"]
 
         self.pool = pool
+
+        # Validate that the pool has content.
+        total = (len(pool.propositions) + len(pool.predicates)
+                 + len(pool.relations) + len(pool.entities.names))
+        if total == 0:
+            raise RuntimeError(
+                "Pool generation produced no content. Check the API key, "
+                "model name, and network connectivity."
+            )
+
         if verbose:
             print("Pool generation complete!")
 
@@ -194,13 +262,14 @@ Topics to cover: {', '.join(topics[:5])}
 
 Requirements:
 - Each proposition should be a simple declarative statement
+- Start each proposition with a lowercase letter — do not capitalise the first word unless it is a proper noun (e.g., "the sun is shining" not "The sun is shining", but "Paris is beautiful" is fine)
 - Propositions should be concrete and specific, not abstract
 - Include cause-effect pairs (e.g., "it is raining" and "the ground is wet")
 - Keep each proposition under 10 words
 - Generate at least {self.config.propositions_per_topic * len(topics[:5])} propositions
 
 Respond with a JSON array of strings only:
-["proposition 1", "proposition 2", ...]"""
+["it is raining", "the ground is wet", ...]"""
 
         content = self._call_api(prompt)
         propositions = self._parse_string_array(content)
@@ -212,27 +281,51 @@ Respond with a JSON array of strings only:
 
     def _generate_predicates(self, topics: List[str]) -> List[AtomicProposition]:
         """Generate predicates for first-order logic (e.g., 'tall', 'red', 'edible')."""
-        prompt = f"""Generate a diverse list of predicates (properties/adjectives) that can describe things.
-These will be used in first-order logic statements like "X is [predicate]".
+        prompt = f"""Generate a diverse list of predicates (adjectives, past participles, or noun phrases) that can describe things.
+These will be used in first-order logic statements like "X is [predicate]", so they MUST be grammatically correct after "is".
 
 Topics to cover: {', '.join(topics[:5])}
 
 Requirements:
-- Each predicate should be a single property or short phrase
-- Mix of physical properties, states, categories, and abstract qualities
-- Generate predicates that can form logical chains (e.g., "made of metal" implies "conducts electricity")
+- ONLY use adjectives, past participles, or noun phrases — these must sound natural after "is"
+- Do NOT include "is" as a prefix — write "tall" not "is tall"
+- Do NOT use present-tense or base-form verbs — "absorbs water", "requires a helmet", "eats food", "runs fast" are ALL invalid
+- Valid forms: adjectives ("tall", "flexible", "edible"), past participles ("made of metal", "broken", "frozen"), noun phrases ("a mammal", "a solid"), ability phrases ("able to fly")
+- Start each predicate with a lowercase letter
+- Generate predicates that can form logical chains (e.g., "made of metal" implies "a conductor")
 - Keep each predicate under 5 words
 - Generate at least {self.config.predicates_per_topic * len(topics[:5])} predicates
 
 Respond with a JSON array of strings only:
-["predicate 1", "predicate 2", ...]"""
+["tall", "made of metal", "edible", "flexible", "able to fly", ...]"""
 
         content = self._call_api(prompt)
         predicates = self._parse_string_array(content)
 
+        # Strip leading "is " to avoid double-"is" when rendered with the
+        # template "{entity} is {predicate}".
+        cleaned = []
+        for p in predicates:
+            if p.lower().startswith("is "):
+                p = p[3:]
+            cleaned.append(p)
+
+        # Filter out verb phrases: present-tense verbs (e.g. "absorbs water",
+        # "requires a helmet") are invalid as "{entity} is {predicate}".
+        # Heuristic: first word ends in -s/-es but NOT in adjective suffixes.
+        _ADJ_SUFFIXES = ("ous", "ious", "eous", "ness", "less", "ful", "ble",
+                         "ive", "ent", "ant", "ous", "ss")
+        valid = []
+        for p in cleaned:
+            first = p.split()[0].lower() if p else ""
+            if (first.endswith("s")
+                    and not any(first.endswith(sfx) for sfx in _ADJ_SUFFIXES)):
+                continue  # likely a present-tense verb phrase — skip
+            valid.append(p)
+
         return [
             AtomicProposition(text=p, topic="mixed", is_predicate=True)
-            for p in predicates
+            for p in valid
         ]
 
     def _generate_relations(self) -> List[AtomicProposition]:
@@ -285,7 +378,8 @@ These will be used as specific instances in statements.
 
 Requirements:
 - Include person names (diverse), place names, object descriptions
-- Mix of proper nouns and definite descriptions ("the red car", "John", "Mount Everest")
+- Mix of proper nouns and definite descriptions
+- Use lowercase for common nouns and articles (e.g., "the red car", "the old house") — only capitalise proper nouns (e.g., "John", "Mount Everest", "Paris")
 - Generate at least {self.config.entities_count} entity names
 
 Respond with a JSON array of strings only:
@@ -298,22 +392,34 @@ Respond with a JSON array of strings only:
         """Make API call with retries."""
         for attempt in range(self.config.retry_attempts):
             try:
-                response = self.client.messages.create(
+                response = self.client.chat.completions.create(
                     model=self.config.model,
-                    max_tokens=self.config.max_tokens,
+                    max_completion_tokens=self.config.max_tokens,
                     temperature=self.config.temperature,
-                    messages=[{"role": "user", "content": prompt}]
+                    messages=[{"role": "user", "content": prompt}],
                 )
-                return response.content[0].text
+                content = response.choices[0].message.content
+                if not content:
+                    print(f"    Warning: API returned empty content "
+                          f"(finish_reason={response.choices[0].finish_reason})")
+                    return "[]"
+                return content
             except Exception as e:
                 if attempt < self.config.retry_attempts - 1:
+                    print(f"    Warning: API call failed (attempt {attempt + 1}/"
+                          f"{self.config.retry_attempts}): {e}")
                     time.sleep(self.config.retry_delay)
                 else:
-                    raise e
+                    raise
         return "[]"
 
     def _parse_string_array(self, content: str) -> List[str]:
-        """Parse JSON array of strings from API response."""
+        """Parse JSON array of strings from API response.
+
+        Strips trailing periods from each string so that propositions
+        don't include sentence-ending punctuation (e.g. "it is raining."
+        becomes "it is raining").
+        """
         try:
             content = content.strip()
             # Find JSON array in content
@@ -321,8 +427,11 @@ Respond with a JSON array of strings only:
             end_idx = content.rfind("]") + 1
             if start_idx >= 0 and end_idx > start_idx:
                 content = content[start_idx:end_idx]
-            return json.loads(content)
-        except json.JSONDecodeError:
+            items = json.loads(content)
+            return [s.rstrip(".") for s in items if isinstance(s, str)]
+        except (json.JSONDecodeError, AttributeError):
+            preview = repr(content[:200]) if content else repr(content)
+            print(f"    Warning: failed to parse API response as JSON array: {preview}")
             return []
 
     def get_propositions_for_template(

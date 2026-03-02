@@ -32,10 +32,18 @@ class Premise:
 
 @dataclass
 class Annotation:
-    """Complete annotation with premises, conclusion, and metadata."""
+    """Complete annotation with premises, content, and metadata.
+
+    The ``content`` field stores the training target:
+
+    * **Stage 0**: the final conclusion text.
+    * **Stage 1**: the full proof trace with ``<PREMISE>``/``<CONCLUSION>``
+      tags.
+    * **Legacy / non-chain data**: a plain conclusion string.
+    """
     id: str
     premises: List[Premise]
-    conclusion: str
+    content: str
     verifier_notes: Optional[str] = None
     annotator_id: Optional[str] = None
     timestamp: Optional[str] = None
@@ -48,15 +56,19 @@ class Annotation:
         return {
             "id": self.id,
             "premises": [p.to_dict() for p in self.premises],
-            "conclusion": self.conclusion,
+            "content": self.content,
             "verifier_notes": self.verifier_notes,
             "annotator_id": self.annotator_id,
             "timestamp": self.timestamp
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Annotation":
-        """Create Annotation from dictionary."""
+        """Create Annotation from dictionary.
+
+        Accepts both ``"content"`` (preferred) and ``"conclusion"``
+        (backward-compatible) as the training-target field.
+        """
         premises = [
             Premise(
                 id=p["id"],
@@ -64,16 +76,17 @@ class Annotation:
             ) for p in data["premises"]
         ]
 
-        conclusion_data = data["conclusion"]
-        if isinstance(conclusion_data, dict):
-            conclusion_text = conclusion_data["text"]
+        # Accept both "content" and legacy "conclusion".
+        content_data = data.get("content") or data.get("conclusion", "")
+        if isinstance(content_data, dict):
+            content_text = content_data.get("text", "")
         else:
-            conclusion_text = conclusion_data
+            content_text = content_data
 
         return cls(
             id=data["id"],
             premises=premises,
-            conclusion=conclusion_text,
+            content=content_text,
             verifier_notes=data.get("verifier_notes"),
             annotator_id=data.get("annotator_id"),
             timestamp=data.get("timestamp")
@@ -92,7 +105,7 @@ class Annotation:
 # JSON Schema for validation
 ANNOTATION_SCHEMA = {
     "type": "object",
-    "required": ["id", "premises", "conclusion"],
+    "required": ["id", "premises"],
     "properties": {
         "id": {"type": "string"},
         "premises": {
@@ -106,7 +119,8 @@ ANNOTATION_SCHEMA = {
                 }
             }
         },
-        "conclusion": {"type": "string"},
+        "content": {"type": "string"},
+        "conclusion": {"type": "string"},  # backward compat
         "verifier_notes": {"type": "string"},
         "annotator_id": {"type": "string"},
         "timestamp": {"type": "string"}
@@ -165,11 +179,11 @@ def format_prompt(context: str, question: Optional[str] = None, system_prompt: O
     """Format prompt for training or inference."""
     if system_prompt is None:
         system_prompt = """You must respond only in valid JSON format. Your response must contain exactly two fields:
-1. "premises": an array of concise factual statements (premises) that support your conclusion
-2. "conclusion": a single sentence that follows logically from the premises
+1. "premises": an array of concise factual statements (premises) that support your content
+2. "content": the conclusion or proof trace that follows logically from the premises
 
 Each premise should be a factual statement that can be verified. Link premises to evidence when available.
-Ensure the conclusion follows logically from all the premises provided."""
+Ensure the content follows logically from all the premises provided."""
     
     user_part = f"Question: {question}\n" if question else ""
     user_part += f"Context: {context}"

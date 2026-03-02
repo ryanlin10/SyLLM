@@ -39,6 +39,9 @@ from src.evaluation.benchmark_registry import (
     BenchmarkCategory,
     list_benchmarks,
 )
+
+# All categories that --standard-only should include
+_STANDARD_CATEGORIES = {BenchmarkCategory.STANDARD}
 from src.evaluation.benchmark_evaluator import BenchmarkEvaluator
 from src.evaluation.report_generator import ReportGenerator
 
@@ -88,6 +91,9 @@ Examples:
     bench_group.add_argument(
         "--logic-only", action="store_true", help="Run only logic benchmarks"
     )
+    bench_group.add_argument(
+        "--code-only", action="store_true", help="Run only code benchmarks (HumanEval, MBPP)"
+    )
 
     # Evaluation parameters
     eval_group = parser.add_argument_group("Evaluation parameters")
@@ -129,13 +135,25 @@ def main():
     # List benchmarks
     if args.list:
         print("\nAvailable benchmarks:")
-        print("-" * 60)
-        for key, desc in list_benchmarks().items():
-            config = BENCHMARK_REGISTRY[key]
-            category = config.category.value
-            btype = config.benchmark_type.value
-            print(f"  {key:<18} {desc}")
-            print(f"  {'':18} type={btype}, {config.num_few_shot}-shot, category={category}")
+        print("-" * 72)
+        # Group by category
+        by_cat: dict = {}
+        for key, cfg in BENCHMARK_REGISTRY.items():
+            by_cat.setdefault(cfg.category.value, []).append((key, cfg))
+        for cat_name, entries in by_cat.items():
+            print(f"\n  [{cat_name.upper()}]")
+            for key, cfg in entries:
+                btype = cfg.benchmark_type.value
+                token_info = (
+                    f", max_tokens={cfg.max_tokens_override}"
+                    if cfg.max_tokens_override
+                    else ""
+                )
+                print(f"    {key:<18} {cfg.name} — {cfg.description}")
+                print(
+                    f"    {'':18} type={btype}, {cfg.num_few_shot}-shot"
+                    f", baseline={cfg.random_baseline:.2f}{token_info}"
+                )
         print()
         return
 
@@ -180,6 +198,12 @@ def main():
             k
             for k, v in BENCHMARK_REGISTRY.items()
             if v.category == BenchmarkCategory.LOGIC
+        ]
+    elif args.code_only:
+        benchmarks = [
+            k
+            for k, v in BENCHMARK_REGISTRY.items()
+            if v.category == BenchmarkCategory.CODE
         ]
     else:
         benchmarks = list(BENCHMARK_REGISTRY.keys())

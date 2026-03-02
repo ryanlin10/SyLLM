@@ -72,6 +72,25 @@ from .nl_renderer import (
     InferenceRenderer,
     RenderConfig
 )
+from .chain_generator import (
+    ChainGenerator,
+    ChainGeneratorConfig,
+    NDRule,
+    ProofStep,
+    ProofChain,
+    CompressedSegment,
+)
+from .applied_chain_generator import (
+    AppliedChainGenerator,
+    AppliedGeneratorConfig,
+    AppliedExample,
+    APPLIED_DOMAINS,
+)
+from .stage2_generator import (
+    Stage2Generator,
+    Stage2Config,
+    Stage2Example,
+)
 
 __all__ = [
     # Schema
@@ -133,4 +152,20 @@ __all__ = [
     "NaturalLanguageRenderer",
     "InferenceRenderer",
     "RenderConfig",
+    # Chain generation (natural deduction proof chains)
+    "ChainGenerator",
+    "ChainGeneratorConfig",
+    "NDRule",
+    "ProofStep",
+    "ProofChain",
+    "CompressedSegment",
+    # Applied chain generation (domain-specific examples)
+    "AppliedChainGenerator",
+    "AppliedGeneratorConfig",
+    "AppliedExample",
+    "APPLIED_DOMAINS",
+    # Stage 2 generation (semi-formal CoT on logic benchmarks)
+    "Stage2Generator",
+    "Stage2Config",
+    "Stage2Example",
 ]

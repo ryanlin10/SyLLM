@@ -32,7 +32,6 @@ setup(
             "syllm-generate-data=scripts.generate_data:main",
             "syllm-prepare-data=scripts.prepare_data:main",
             "syllm-train=scripts.train_finetune:main",
-            "syllm-rlhf=scripts.train_rlhf:main",
             "syllm-evaluate=scripts.evaluate:main",
             "syllm-inference=scripts.inference_demo:main",
         ],

@@ -44,7 +44,26 @@ The core data generation builds on a polymorphic AST for logic formulas:
 - **`syntax_tree.py`**: `FormulaNode` ABC with subtypes `AtomNode`, `NegationNode`, `BinaryNode`, `QuantifiedNode`. `RandomTreeGenerator` creates random formulas with configurable depth/weights. Supports both propositional and first-order logic.
 - **`inference_generator.py`**: 11 propositional patterns (Modus Ponens, Modus Tollens, etc.) and 5 FOL patterns (Universal Instantiation, etc.). Each pattern is instantiated with random subformulas to produce `Inference` objects (premises + conclusion + pattern name).
 - **`nl_renderer.py`**: Converts formula ASTs to natural language. Uses curly brackets `{}` to disambiguate nested compound formulas.
-- **`atomic_proposition_generator.py`**: Calls Claude API to generate diverse atomic propositions. Maintains `PropositionPool`/`EntityPool` for reuse across examples.
+- **`atomic_proposition_generator.py`**: Calls OpenAI API to generate diverse atomic propositions. Maintains `PropositionPool`/`EntityPool` for reuse across examples.
+
+### Chain Generation (`src/data/chain_generator.py`)
+
+Generates multi-step natural deduction proof chains using **backward (goal-directed)
+construction**. Starts with a final conclusion and recursively determines which rule
+derives it and what premises are needed.
+
+- **Backward construction**: `_justify(goal, depth)` picks a rule that can derive the
+  goal, adds required premises, and recurses on sub-goals. Sound by construction —
+  every premise is essential, no fabrication, no redundancy.
+- **All 13 ND rules**: AND/OR/IMPLIES/IFF intro+elim, NOT intro+elim, FORALL intro+elim,
+  EXISTS intro+elim, OR_ELIM (discharge), EXISTS_ELIM (discharge).
+- **Discharge rules**: IMPLIES_INTRO, NOT_INTRO, OR_ELIM, EXISTS_ELIM create
+  assume/derive/discharge proof blocks. Discharged assumptions are used in 50% of cases.
+- **Compound goals**: Antecedents can be compound formulas with 1-4 connectives, forcing
+  introduction rules (AND_INTRO, OR_INTRO, etc.) to fire in sub-derivations.
+- **Stage 0 restrictions**: No negated conclusions, no NOT_INTRO/NOT_ELIM as final step.
+- **Z3 backstop**: After generation, verifies the full chain via Z3 (should never reject).
+- **Two-stage training**: Stage 0 = premises + conclusion only; Stage 1 = full proof trace.
 
 ### Staged Verification (`src/verification/`)
 

@@ -61,7 +61,7 @@ You must respond in the following JSON format:
     "Premise 1: a concise factual statement",
     "Premise 2: another factual statement"
   ],
-  "conclusion": "A conclusion that logically follows from the premises"
+  "content": "A conclusion that logically follows from the premises"
 }}
 
 Requirements:
@@ -145,18 +145,18 @@ JSON response:"""
             ) for i, p in enumerate(parsed.get("premises", []))
         ]
         
-        conclusion_text = parsed.get("conclusion", "")
-        if isinstance(conclusion_text, dict):
-            conclusion_text = conclusion_text.get("text", "")
-            conclusion_type = conclusion_text.get("type", "unsupported" if adversarial else "entailment")
+        content_text = parsed.get("content") or parsed.get("conclusion", "")
+        if isinstance(content_text, dict):
+            content_text = content_text.get("text", "")
+            conclusion_type = content_text.get("type", "unsupported" if adversarial else "entailment")
         else:
             conclusion_type = "unsupported" if adversarial else "entailment"
-        
+
         return Annotation(
             id=str(uuid.uuid4()),
             context=document,
             premises=premises,
-            conclusion=conclusion_text,
+            content=content_text,
             conclusion_type=conclusion_type,
             confidence=0.7 if adversarial else 0.9,
             annotator_id="synthetic_generator",
@@ -205,12 +205,12 @@ class DataAugmenter:
     @staticmethod
     def create_negation_flip(annotation: Annotation) -> Annotation:
         """Create a version with negated conclusion."""
-        negated_conclusion = f"NOT ({annotation.conclusion})"
+        negated_content = f"NOT ({annotation.content})"
         return Annotation(
             id=str(uuid.uuid4()),
             context=annotation.context,
             premises=annotation.premises,
-            conclusion=negated_conclusion,
+            content=negated_content,
             conclusion_type="contradiction",
             confidence=0.8,
             annotator_id="augmenter_negation",
@@ -233,13 +233,13 @@ class DataAugmenter:
             ) for p in annotation.premises
         ]
         
-        new_conclusion = swap_text(annotation.conclusion)
-        
+        new_content = swap_text(annotation.content)
+
         return Annotation(
             id=str(uuid.uuid4()),
             context=annotation.context,
             premises=new_premises,
-            conclusion=new_conclusion,
+            content=new_content,
             conclusion_type="unsupported",  # Entity swap usually breaks support
             confidence=0.7,
             annotator_id="augmenter_entity_swap",
@@ -256,7 +256,7 @@ class DataAugmenter:
             id=str(uuid.uuid4()),
             context=annotation.context,
             premises=kept_premises,
-            conclusion=annotation.conclusion,
+            content=annotation.content,
             conclusion_type="unsupported",
             confidence=0.6,
             annotator_id="augmenter_missing_premise",

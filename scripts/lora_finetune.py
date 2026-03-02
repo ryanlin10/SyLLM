@@ -357,40 +357,56 @@ class DataLoader:
         """
         Format a single example for training using Mistral chat template.
 
-        User message: <PREMISE> premise1 </PREMISE> <PREMISE> premise2 </PREMISE> ...
-        Assistant message: <CONCLUSION> conclusion </CONCLUSION>
+        Handles two data formats:
+
+        **Stage 0/1 (Annotation format):**
+            User message:  ``<PREMISE> p1 </PREMISE> <PREMISE> p2 </PREMISE> ...``
+            Assistant message: conclusion / proof trace from ``content``.
+
+        **Stage 2 (benchmark CoT format):**
+            User message:  full problem context from ``question`` field.
+            Assistant message: semi-formal reasoning from ``content``.
 
         The Mistral Small 3.x chat format (V7-Tekken) is:
-            <s>[SYSTEM_PROMPT]{system}[/SYSTEM_PROMPT][INST]{user_message}[/INST]{assistant_response}</s>
+            ``<s>[SYSTEM_PROMPT]{system}[/SYSTEM_PROMPT][INST]{user_message}[/INST]{assistant_response}</s>``
 
         Returns:
             Tuple of (full_text, assistant_response) where assistant_response is
-            the portion we want to compute loss on (the conclusion).
+            the portion we want to compute loss on.
         """
-        # Extract premises and conclusion from Annotation format
+        # --- Stage 2 format: has "question" field, no structured premises ---
+        if "question" in example and "premises" not in example:
+            user_content = example["question"]
+            assistant_content = str(example.get("content", ""))
+            if not user_content or not assistant_content:
+                return "", ""
+
+            messages = [
+                SystemMessage(content=self.config.system_prompt),
+                UserMessage(content=user_content),
+            ]
+            request = ChatCompletionRequest(messages=messages)
+            encoded = self.mistral_tokenizer.encode_chat_completion(request)
+            full_text = encoded.text + assistant_content + "</s>"
+            return full_text, assistant_content
+
+        # --- Stage 0/1 format: structured premises + content/conclusion ---
         premises, conclusion = self._extract_premises_conclusion(example)
 
         if not premises or not conclusion:
-            # Skip malformed data
             return "", ""
 
-        # Format user and assistant messages
         user_content = self._format_user_message(premises)
         assistant_content = self._format_assistant_message(conclusion)
 
-        # Build Mistral chat messages (without AssistantMessage - we append it manually)
         messages = [
             SystemMessage(content=self.config.system_prompt),
             UserMessage(content=user_content),
         ]
 
-        # Encode using Mistral tokenizer to get properly formatted prompt
-        # This gives us: <s>[SYSTEM_PROMPT]...[/SYSTEM_PROMPT][INST]...[/INST]
         request = ChatCompletionRequest(messages=messages)
         encoded = self.mistral_tokenizer.encode_chat_completion(request)
 
-        # Build full training text: prompt + assistant response + EOS
-        # Format: <s>[SYSTEM_PROMPT]...[/SYSTEM_PROMPT][INST]...[/INST]{response}</s>
         full_text = encoded.text + assistant_content + "</s>"
 
         return full_text, assistant_content

@@ -10,6 +10,7 @@ from .benchmark_registry import (
     list_benchmarks,
 )
 from .benchmark_evaluator import BenchmarkEvaluator, ComparisonResult, BenchmarkResult
+from .benchmark_loaders import get_loader, BenchmarkItem
 from .report_generator import ReportGenerator
 
 __all__ = [
@@ -28,4 +29,7 @@ __all__ = [
     "ComparisonResult",
     "BenchmarkResult",
     "ReportGenerator",
+    # Loaders
+    "get_loader",
+    "BenchmarkItem",
 ]

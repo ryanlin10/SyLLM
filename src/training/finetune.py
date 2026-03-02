@@ -25,7 +25,7 @@ def format_target(premises: List[Dict[str, Any]], conclusion: str) -> str:
     premise_texts = [p.get("text", p) if isinstance(p, dict) else p for p in premises]
     target = {
         "premises": premise_texts,
-        "conclusion": conclusion
+        "content": conclusion
     }
     return json.dumps(target, ensure_ascii=False)
 
@@ -50,7 +50,7 @@ class StructuredOutputDataset:
             context = ann.get("context", "")
             premises = ann.get("premises", [])
             
-            conclusion_data = ann.get("conclusion", {})
+            conclusion_data = ann.get("content") or ann.get("conclusion", {})
             if isinstance(conclusion_data, dict):
                 conclusion = conclusion_data.get("text", "")
             else:

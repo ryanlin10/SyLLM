@@ -52,12 +52,14 @@ Usage examples::
 """
 
 import sys
+import os
 import argparse
 import json
 import random
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 # Add project root to path so ``src`` is importable.
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -66,6 +68,7 @@ from src.data.chain_generator import ChainGenerator, ChainGeneratorConfig
 from src.data.atomic_proposition_generator import (
     AtomicPropositionGenerator,
     GeneratorConfig,
+    PropositionPool,
     create_fallback_pool,
 )
 from src.data.schema import Annotation, Premise
@@ -104,6 +107,86 @@ def build_pool(
     )
     gen = AtomicPropositionGenerator(config)
     return gen.generate_pool(verbose=not quiet, skip_categories=True)
+
+
+def _divide_work(total: int, num_workers: int) -> List[int]:
+    """Split *total* items into *num_workers* batch sizes."""
+    base, remainder = divmod(total, num_workers)
+    return [base + (1 if i < remainder else 0) for i in range(num_workers)]
+
+
+def _generate_batch(
+    chain_config_dict: Dict[str, Any],
+    pool_dict: Dict[str, Any],
+    batch_size: int,
+    seed: int,
+    stage0: bool,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """Worker function executed in a subprocess.
+
+    Reconstructs the generator and pool from dicts (Z3 C bindings are
+    per-process), generates *batch_size* examples, and returns serialized
+    annotations plus failure stats.
+    """
+    # Ensure project root is importable inside the subprocess.
+    project_root = str(Path(__file__).parent.parent)
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    from src.data.chain_generator import ChainGenerator, ChainGeneratorConfig
+    from src.data.atomic_proposition_generator import PropositionPool
+    from src.data.schema import Annotation, Premise
+
+    random.seed(seed)
+
+    config = ChainGeneratorConfig(**chain_config_dict)
+    generator = ChainGenerator(config)
+    pool = PropositionPool.from_dict(pool_dict)
+
+    results: List[Dict[str, Any]] = []
+    failures = 0
+
+    for _ in range(batch_size):
+        try:
+            chain = generator.generate()
+            rendered = generator.render(chain, pool)
+
+            if stage0:
+                premise_objects = [
+                    {"id": p["id"], "text": p["text"]}
+                    for p in rendered["essential_premises"]
+                ]
+            else:
+                premise_objects = [
+                    {"id": p["id"], "text": p["text"]}
+                    for p in rendered["premises"]
+                ]
+
+            if stage0:
+                parts = []
+                for p in premise_objects:
+                    parts.append(f"<PREMISE> {p['text']} </PREMISE>")
+                parts.append(
+                    f"<CONCLUSION> {rendered['conclusion']} </CONCLUSION>"
+                )
+                content_field = "\n".join(parts)
+            else:
+                content_field = rendered["proof_trace"]
+
+            results.append({
+                "id": rendered["id"],
+                "premises": premise_objects,
+                "content": content_field,
+                "verifier_notes": rendered["verifier_notes"],
+                "annotator_id": rendered["annotator_id"],
+                "timestamp": rendered["timestamp"],
+            })
+        except Exception:
+            failures += 1
+
+    stats = generator.failure_stats
+    stats["failures"] = failures
+    return results, stats
 
 
 def main() -> None:
@@ -196,6 +279,21 @@ Examples:
              "trace).  Train with --train-on-all for loss on all tokens.",
     )
     parser.add_argument(
+        "--pool-cache",
+        type=str,
+        default=None,
+        help="Path to cache the proposition pool as JSON.  If the file "
+             "exists, the pool is loaded from it (skipping API calls); "
+             "otherwise it is generated and saved.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel worker processes for chain generation.  "
+             "0 = use all CPU cores, 1 = sequential (default: 1).",
+    )
+    parser.add_argument(
         "-q", "--quiet",
         action="store_true",
         help="Suppress progress messages",
@@ -230,23 +328,42 @@ Examples:
         print(f"Chain length:    {args.min_chain} - {args.max_chain}")
         print(f"Max compression: {args.max_compression}")
         print(f"Pool:            {'fallback' if args.use_fallback else args.model}")
+        if args.pool_cache:
+            print(f"Pool cache:      {args.pool_cache}")
+        num_workers = args.workers if args.workers > 0 else os.cpu_count()
+        print(f"Workers:         {num_workers}")
         print()
 
-    # Build proposition pool.
-    try:
-        pool = build_pool(
-            use_fallback=args.use_fallback,
-            api_key=args.api_key,
-            model=args.model,
-            quiet=args.quiet,
-            num_examples=args.num_examples,
-        )
-    except (ImportError, ValueError) as exc:
-        if not args.use_fallback:
-            print(f"Error creating pool: {exc}")
+    # Build proposition pool (with optional caching).
+    if args.pool_cache and Path(args.pool_cache).exists():
+        if not args.quiet:
+            print(f"Loading pool from cache: {args.pool_cache}")
+        pool = PropositionPool.load(args.pool_cache)
+    else:
+        try:
+            pool = build_pool(
+                use_fallback=args.use_fallback,
+                api_key=args.api_key,
+                model=args.model,
+                quiet=args.quiet,
+                num_examples=args.num_examples,
+            )
+        except (ImportError, ValueError) as exc:
+            if not args.use_fallback:
+                print(f"Error creating pool: {exc}")
+                print("Hint: use --use-fallback to skip API calls.")
+                sys.exit(1)
+            pool = create_fallback_pool()
+        except Exception as exc:
+            print(f"Error during pool generation: {type(exc).__name__}: {exc}")
             print("Hint: use --use-fallback to skip API calls.")
             sys.exit(1)
-        pool = create_fallback_pool()
+
+        # Save pool to cache if requested.
+        if args.pool_cache:
+            pool.save(args.pool_cache)
+            if not args.quiet:
+                print(f"Saved pool cache to: {args.pool_cache}")
 
     # Configure chain generator.
     chain_config = ChainGeneratorConfig(
@@ -257,64 +374,131 @@ Examples:
         allow_not_intro=not args.stage0,
         allow_not_elim_final=not args.stage0,
     )
-    generator = ChainGenerator(chain_config)
 
-    # Generate examples.
+    # Determine effective worker count.
+    num_workers = args.workers
+    if num_workers == 0:
+        num_workers = os.cpu_count() or 1
+    use_parallel = num_workers > 1
+
+    # Serialize config and pool for cross-process transfer.
+    from dataclasses import asdict
+    chain_config_dict = asdict(chain_config)
+    pool_dict = pool.to_dict()
+
+    # Generate examples (parallel or sequential).
     annotations: List[Annotation] = []
     failures = 0
+    aggregated_stats: Dict[str, int] = {
+        "total_attempts": 0,
+        "successes": 0,
+        "z3_backstop_rejections": 0,
+        "exceptions": 0,
+    }
 
-    for i in range(args.num_examples):
+    if use_parallel:
+        batch_sizes = _divide_work(args.num_examples, num_workers)
+        if not args.quiet:
+            print(f"Dispatching {args.num_examples} examples across "
+                  f"{num_workers} workers (batches: {batch_sizes})...")
+
         try:
-            chain = generator.generate()
-            rendered = generator.render(chain, pool)
-
-            # Stage 0: use only the essential (backward-traced, deduplicated)
-            # premises needed for the final conclusion.
-            # Stage 1: use all undischarged premises (full proof context).
-            if args.stage0:
-                premise_objects = [
-                    Premise(id=p["id"], text=p["text"])
-                    for p in rendered["essential_premises"]
-                ]
-            else:
-                premise_objects = [
-                    Premise(id=p["id"], text=p["text"])
-                    for p in rendered["premises"]
-                ]
-
-            # Stage 0: tagged premises + final conclusion — no intermediate
-            # steps.  The model sees the premises as context and learns to
-            # predict only the final conclusion.
-            # Stage 1 (default): full proof trace with per-step
-            # <PREMISE>/<CONCLUSION> groups including intermediate inferences.
-            if args.stage0:
-                parts = []
-                for p in premise_objects:
-                    parts.append(f"<PREMISE> {p.text} </PREMISE>")
-                parts.append(
-                    f"<CONCLUSION> {rendered['conclusion']} </CONCLUSION>"
-                )
-                content_field = "\n".join(parts)
-            else:
-                content_field = rendered["proof_trace"]
-
-            annotation = Annotation(
-                id=rendered["id"],
-                premises=premise_objects,
-                content=content_field,
-                verifier_notes=rendered["verifier_notes"],
-                annotator_id=rendered["annotator_id"],
-                timestamp=rendered["timestamp"],
-            )
-            annotations.append(annotation)
-
-            if not args.quiet and (i + 1) % 50 == 0:
-                print(f"  Generated {i + 1}/{args.num_examples} examples")
-
+            completed = 0
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                futures = {
+                    executor.submit(
+                        _generate_batch,
+                        chain_config_dict,
+                        pool_dict,
+                        bs,
+                        args.seed + wi,
+                        args.stage0,
+                    ): wi
+                    for wi, bs in enumerate(batch_sizes)
+                    if bs > 0
+                }
+                for future in as_completed(futures):
+                    wi = futures[future]
+                    batch_results, batch_stats = future.result()
+                    for r in batch_results:
+                        ann = Annotation(
+                            id=r["id"],
+                            premises=[Premise(id=p["id"], text=p["text"])
+                                      for p in r["premises"]],
+                            content=r["content"],
+                            verifier_notes=r["verifier_notes"],
+                            annotator_id=r["annotator_id"],
+                            timestamp=r["timestamp"],
+                        )
+                        annotations.append(ann)
+                    failures += batch_stats.get("failures", 0)
+                    for k in aggregated_stats:
+                        aggregated_stats[k] += batch_stats.get(k, 0)
+                    completed += batch_sizes[wi]
+                    if not args.quiet:
+                        print(f"  Worker {wi} done — "
+                              f"{completed}/{args.num_examples} total")
         except Exception as exc:
-            failures += 1
-            if not args.quiet and failures <= 5:
-                print(f"  Warning: example {i + 1} failed: {exc}")
+            if not args.quiet:
+                print(f"  Parallel generation failed ({exc}), "
+                      f"falling back to sequential...")
+            # Reset and fall through to sequential.
+            annotations = []
+            failures = 0
+            aggregated_stats = {k: 0 for k in aggregated_stats}
+            use_parallel = False
+
+    if not use_parallel:
+        # Sequential generation (single-process).
+        generator = ChainGenerator(chain_config)
+        random.seed(args.seed)
+
+        for i in range(args.num_examples):
+            try:
+                chain = generator.generate()
+                rendered = generator.render(chain, pool)
+
+                if args.stage0:
+                    premise_objects = [
+                        Premise(id=p["id"], text=p["text"])
+                        for p in rendered["essential_premises"]
+                    ]
+                else:
+                    premise_objects = [
+                        Premise(id=p["id"], text=p["text"])
+                        for p in rendered["premises"]
+                    ]
+
+                if args.stage0:
+                    parts = []
+                    for p in premise_objects:
+                        parts.append(f"<PREMISE> {p.text} </PREMISE>")
+                    parts.append(
+                        f"<CONCLUSION> {rendered['conclusion']} </CONCLUSION>"
+                    )
+                    content_field = "\n".join(parts)
+                else:
+                    content_field = rendered["proof_trace"]
+
+                annotation = Annotation(
+                    id=rendered["id"],
+                    premises=premise_objects,
+                    content=content_field,
+                    verifier_notes=rendered["verifier_notes"],
+                    annotator_id=rendered["annotator_id"],
+                    timestamp=rendered["timestamp"],
+                )
+                annotations.append(annotation)
+
+                if not args.quiet and (i + 1) % 50 == 0:
+                    print(f"  Generated {i + 1}/{args.num_examples} examples")
+
+            except Exception as exc:
+                failures += 1
+                if not args.quiet and failures <= 5:
+                    print(f"  Warning: example {i + 1} failed: {exc}")
+
+        aggregated_stats = generator.failure_stats
 
     # Shuffle.
     random.shuffle(annotations)
@@ -335,13 +519,12 @@ Examples:
         print(f"Failures:        {failures}")
         print(f"Output:          {args.output}")
 
-        # Detailed failure breakdown from generator.
-        stats = generator.failure_stats
+        # Detailed failure breakdown.
         print(f"\nGeneration statistics:")
-        print(f"  Total attempts:               {stats['total_attempts']}")
-        print(f"  Successes:                    {stats['successes']}")
-        print(f"  Z3 backstop rejections:       {stats['z3_backstop_rejections']}")
-        print(f"  Exceptions:                   {stats['exceptions']}")
+        print(f"  Total attempts:               {aggregated_stats['total_attempts']}")
+        print(f"  Successes:                    {aggregated_stats['successes']}")
+        print(f"  Z3 backstop rejections:       {aggregated_stats['z3_backstop_rejections']}")
+        print(f"  Exceptions:                   {aggregated_stats['exceptions']}")
 
         # Summary statistics.
         rule_counts: dict = {}

@@ -76,7 +76,7 @@ class RenderConfig:
     vary_templates: bool = False  # Set to False for consistency
 
     # Capitalize first letter of output
-    capitalize_output: bool = True
+    capitalize_output: bool = False
 
 
 class NaturalLanguageRenderer:
@@ -106,6 +106,11 @@ class NaturalLanguageRenderer:
     def render(self, formula: FormulaNode) -> str:
         """
         Render a formula tree to natural language.
+
+        Resets all atom-to-NL mappings before rendering, so each call
+        produces independent mappings.  For rendering multiple formulas
+        with *consistent* mappings (e.g. a proof chain), use
+        :meth:`register_formulas` followed by :meth:`render_formula`.
 
         Args:
             formula: The formula tree to render
@@ -137,6 +142,45 @@ class NaturalLanguageRenderer:
         if self.config.capitalize_output and result:
             result = result[0].upper() + result[1:]
 
+        return result
+
+    def register_formulas(self, formulas: List[FormulaNode]) -> None:
+        """Pre-register atom/predicate/entity mappings for a batch of formulas.
+
+        Call this once with **all** formulas that will appear in a proof
+        chain (initial premises, step premises, step conclusions, etc.),
+        then use :meth:`render_formula` for each individual formula.
+        This guarantees that the same internal atom always maps to the
+        same natural-language text.
+        """
+        self._atom_mapping = {}
+        self._entity_mapping = {}
+        self._predicate_mapping = {}
+        self._bound_variables = set()
+        self._variable_names = {}
+
+        self._is_fol_mode = any(self._contains_fol(f) for f in formulas)
+
+        if self._is_fol_mode:
+            for f in formulas:
+                self._assign_fol_mappings(f)
+        else:
+            all_atoms: List[str] = []
+            for f in formulas:
+                all_atoms.extend(f.get_atoms())
+            self._assign_atoms(list(set(all_atoms)))
+
+    def render_formula(self, formula: FormulaNode) -> str:
+        """Render a formula using previously registered mappings.
+
+        Must call :meth:`register_formulas` first.  Does **not** reset
+        mappings, so all formulas rendered with this method share the
+        same atom-to-NL assignments.
+        """
+        self._bound_variables = set()
+        result = self._render_node(formula)
+        if self.config.capitalize_output and result:
+            result = result[0].upper() + result[1:]
         return result
 
     def render_inference(

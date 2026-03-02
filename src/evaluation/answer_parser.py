@@ -143,6 +143,110 @@ def parse_true_false_unknown(text: str) -> int:
     return 2  # Default to unknown
 
 
+def parse_code_answer(text: str, entry_point: str = "") -> str:
+    """Extract a Python function body from model-generated text.
+
+    Priority:
+    1. Fenced ```python ... ``` block
+    2. Fenced ``` ... ``` block
+    3. Function starting at the named entry_point
+    4. Any 'def ...' statement onward
+    5. Raw text as fallback
+    """
+    # 1. ```python ... ```
+    code_block = re.search(r"```python\s*\n(.*?)```", text, re.DOTALL)
+    if code_block:
+        return code_block.group(1).strip()
+
+    # 2. ``` ... ```
+    code_block = re.search(r"```\s*\n(.*?)```", text, re.DOTALL)
+    if code_block:
+        return code_block.group(1).strip()
+
+    # 3. Named entry point
+    if entry_point:
+        func_match = re.search(
+            rf"def\s+{re.escape(entry_point)}\s*\(", text
+        )
+        if func_match:
+            return text[func_match.start():].strip()
+
+    # 4. Any def statement
+    def_match = re.search(r"def\s+\w+\s*\(", text)
+    if def_match:
+        return text[def_match.start():].strip()
+
+    return text.strip()
+
+
+def parse_math_answer(text: str) -> str:
+    """Extract a mathematical answer from model-generated text.
+
+    Priority:
+    1. \\boxed{...} (standard MATH benchmark format)
+    2. "The answer is X" / "Answer: X" patterns
+    3. Trailing "= X" on a line
+    4. Last non-empty line
+    """
+    text = text.strip()
+
+    # 1. \boxed{...} — handle one level of nesting
+    boxed = re.search(r"\\boxed\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", text)
+    if boxed:
+        return boxed.group(1).strip()
+
+    # 2. Explicit answer phrase
+    answer_match = re.search(
+        r"(?:[Tt]he\s+)?(?:final\s+)?[Aa]nswer\s*(?:is\s*)?[=:\s]+([^\n.]+)",
+        text,
+    )
+    if answer_match:
+        return answer_match.group(1).strip()
+
+    # 3. Trailing "= X"
+    eq_match = re.search(
+        r"=\s*([\-]?[\d/.,]+(?:\s*\\?[a-zA-Z]+)?)\s*$", text, re.MULTILINE
+    )
+    if eq_match:
+        return eq_match.group(1).strip()
+
+    # 4. Last meaningful line
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    return lines[-1] if lines else ""
+
+
+def normalize_math_answer(text: str) -> str:
+    """Normalize a math answer string for comparison.
+
+    Strips LaTeX commands, whitespace, and punctuation so that
+    equivalent expressions compare equal as strings.
+    """
+    text = text.strip()
+    # Remove surrounding dollar signs
+    text = re.sub(r"^\$+|\$+$", "", text).strip()
+    # Remove common LaTeX wrappers (keep the inner argument)
+    text = re.sub(r"\\(?:dfrac|tfrac|frac)\{([^}]+)\}\{([^}]+)\}", r"\1/\2", text)
+    text = re.sub(r"\\left|\\right|\\,|\\;|\\!|\\quad|\\qquad", "", text)
+    text = re.sub(r"\\(?:text|mathrm|mathbf|mathit)\{([^}]+)\}", r"\1", text)
+    # Collapse spaces
+    text = re.sub(r"\s+", "", text)
+    return text.lower()
+
+
+def parse_triviaqa_answer(text: str) -> str:
+    """Extract and normalize an answer from TriviaQA-style generation output."""
+    text = text.strip()
+
+    # Explicit "Answer: X" pattern
+    match = re.search(r"(?:[Tt]he\s+)?[Aa]nswer\s+(?:is\s*)?[:\s]+([^\n.]+)", text)
+    if match:
+        return normalize_answer(match.group(1))
+
+    # First meaningful line
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    return normalize_answer(lines[0]) if lines else normalize_answer(text)
+
+
 def normalize_answer(text: str) -> str:
     """Normalize answer text for comparison."""
     text = text.lower().strip()

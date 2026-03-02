@@ -87,7 +87,9 @@ class Z3Translator:
 
         Propositional atoms (``is_predicate=False``) become ``z3.Bool``
         variables.  FOL predicates (``is_predicate=True``) become
-        applications of a ``z3.Function`` to an ``IntSort`` argument.
+        applications of a ``z3.Function`` to ``IntSort`` arguments.
+        Supports N-place predicates (e.g., 1-place ``P(a)`` and
+        2-place ``R(a, b)``).
         """
         key = atom.identifier
 
@@ -99,21 +101,27 @@ class Z3Translator:
 
         # ---- FOL predicate ----
         ctx.is_fol = True
+        arity = len(atom.variables)
 
-        if key not in ctx.predicates:
-            ctx.predicates[key] = z3.Function(key, z3.IntSort(), z3.BoolSort())
-        pred_func = ctx.predicates[key]
+        # Key predicates by (name, arity) to support different arities.
+        pred_key = f"{key}/{arity}"
+        if pred_key not in ctx.predicates:
+            ctx.predicates[pred_key] = z3.Function(
+                key, *([z3.IntSort()] * arity), z3.BoolSort()
+            )
+        pred_func = ctx.predicates[pred_key]
 
-        # Resolve the entity / variable argument.
-        var_name = atom.variables[0]
-        if var_name in ctx.bound_vars:
-            entity = ctx.bound_vars[var_name]
-        else:
-            if var_name not in ctx.constants:
-                ctx.constants[var_name] = z3.Const(var_name, z3.IntSort())
-            entity = ctx.constants[var_name]
+        # Resolve each entity / variable argument.
+        args = []
+        for var_name in atom.variables:
+            if var_name in ctx.bound_vars:
+                args.append(ctx.bound_vars[var_name])
+            else:
+                if var_name not in ctx.constants:
+                    ctx.constants[var_name] = z3.Const(var_name, z3.IntSort())
+                args.append(ctx.constants[var_name])
 
-        return pred_func(entity)
+        return pred_func(*args)
 
     def _translate_negation(self, node: NegationNode, ctx: TranslationContext) -> Any:
         """Translate ``NOT child``."""

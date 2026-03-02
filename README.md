@@ -9,7 +9,7 @@ SyLLM enables LLMs to:
 - Automatically verify premise factuality and logical inference using a staged pipeline (NLI, semantic parsing, symbolic solvers)
 - Ground claims in retrieved evidence via RAG
 - Generate synthetic logic reasoning datasets (propositional and first-order logic)
-- Improve reasoning quality through RLHF with verifier-based rewards
+- Improve reasoning quality through reinforcement learning with verifier-based rewards
 
 ## Features
 
@@ -18,9 +18,9 @@ SyLLM enables LLMs to:
 - **Logic Reasoning**: Propositional logic (`P ^ Q -> R`) and first-order logic (`forall x. Human(x) -> Mortal(x)`)
 - **Staged Verification**: Three-stage verifier pipeline — NLI classification, semantic parsing to formal logic, and symbolic solving (Z3/Datalog)
 - **RAG Integration**: Retrieval-augmented generation with FAISS for evidence grounding
-- **Data Generation**: Synthetic data pipeline using random syntax trees and Claude API for diverse atomic propositions
+- **Data Generation**: Synthetic data pipeline using random syntax trees and OpenAI API for diverse atomic propositions
 - **Fine-tuning**: LoRA-based efficient fine-tuning with automatic target module detection, mixed precision, and gradient checkpointing
-- **RLHF**: Reinforcement learning using verifier as reward model (PPO-based)
+- **Reinforcement Learning**: GRPO training with soundness and outcome-based rewards
 - **Evaluation**: Comprehensive metrics for premise accuracy, entailment, verifier calibration, and parse success rate
 - **Inference**: Efficient serving with vLLM and tensor parallelism support
 
@@ -37,7 +37,7 @@ SyLLM/
 │   │   ├── generator.py         # Synthetic data generation
 │   │   ├── curation.py          # Data validation and splitting
 │   │   ├── syntax_tree.py       # Logic formula AST (propositional/FOL)
-│   │   ├── atomic_proposition_generator.py  # Atomic propositions via Claude API
+│   │   ├── atomic_proposition_generator.py  # Atomic propositions via OpenAI API
 │   │   ├── inference_generator.py  # Logic inference example generation
 │   │   ├── nl_renderer.py       # Logic formulas to natural language
 │   │   └── logic_templates.py   # Pre-defined logic patterns
@@ -50,8 +50,8 @@ SyLLM/
 │   │   └── repair.py            # JSON repair utilities
 │   ├── training/                # Training scripts
 │   │   ├── finetune.py          # Fine-tuning with LoRA
-│   │   ├── rlhf.py              # RLHF training
-│   │   └── enhanced_rlhf.py     # Advanced RLHF features
+│   │   ├── grpo.py              # GRPO reinforcement learning trainer
+│   │   └── soundness_reward.py  # Reward function for RL training
 │   ├── evaluation/              # Evaluation framework
 │   │   └── evaluator.py         # Metrics and evaluation
 │   ├── inference/               # Inference pipeline
@@ -64,7 +64,7 @@ SyLLM/
 │   ├── generate_data.py         # Generate synthetic data
 │   ├── prepare_data.py          # Prepare and split data
 │   ├── train_finetune.py        # Run fine-tuning (wrapper)
-│   ├── train_rlhf.py            # Run RLHF training
+│   ├── train_grpo.py            # Run GRPO training
 │   ├── evaluate.py              # Evaluate model
 │   ├── inference_demo.py        # Demo inference with vLLM
 │   ├── switch_model.py          # Model switching utility
@@ -125,13 +125,13 @@ python scripts/lora_finetune.py \
 
 The script supports automatic LoRA target module detection, mixed precision training (FP16/BF16), gradient checkpointing, and checkpoint resumption.
 
-### 4. (Optional) RLHF Training
+### 4. (Optional) GRPO Reinforcement Learning
 
 ```bash
-python scripts/train_rlhf.py
+python scripts/train_grpo.py --train-path ./data/rl_train.jsonl
 ```
 
-Further improves the model using PPO with verifier-based rewards.
+Further improves the model using GRPO with verifier-based rewards.
 
 ### 5. Run Inference
 
@@ -182,7 +182,7 @@ Edit `config.yaml` to customize:
 
 - **Model**: Base model path (or set via `MODEL_NAME` in `.env`), LoRA settings
 - **Training**: Batch sizes, learning rates, epochs
-- **RLHF**: PPO parameters, reward scaling
+- **Reinforcement Learning**: GRPO parameters and reward settings
 - **Verifier**: Confidence thresholds, model paths
 - **Retrieval**: Embedding model, top-k retrieval
 - **Data**: Paths for train/val/test splits

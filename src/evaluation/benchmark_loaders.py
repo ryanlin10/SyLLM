@@ -432,6 +432,277 @@ class TruthfulQALoader(BaseBenchmarkLoader):
 
 
 # =============================================================================
+# Additional standard benchmark loaders
+# =============================================================================
+
+
+class BoolQLoader(BaseBenchmarkLoader):
+    """Loader for BoolQ (Boolean Question Answering over passages)."""
+
+    def _load_split(self, config, split, max_samples=None):
+        items = []
+        try:
+            dataset = load_dataset(config.hf_dataset, split=split)
+            for idx, row in enumerate(dataset):
+                answer = row["answer"]  # bool
+                correct_idx = 0 if answer else 1  # 0=Yes, 1=No
+                items.append(
+                    BenchmarkItem(
+                        id=f"boolq_{idx}",
+                        question=row["question"],
+                        choices=["Yes", "No"],
+                        correct_answer=correct_idx,
+                        correct_answer_text="Yes" if answer else "No",
+                        context=row.get("passage", ""),
+                        subject="reading_comprehension",
+                    )
+                )
+        except Exception as e:
+            print(f"Error loading BoolQ: {e}")
+        return self._truncate(items, max_samples)
+
+    def load(self, config, max_samples=None):
+        return self._load_split(config, config.split, max_samples)
+
+    def get_few_shot_examples(self, config, n=5):
+        return self._load_split(config, config.few_shot_split, max_samples=n)
+
+
+class PIQALoader(BaseBenchmarkLoader):
+    """Loader for PIQA (Physical Intuition QA)."""
+
+    def _load_split(self, config, split, max_samples=None):
+        items = []
+        try:
+            dataset = load_dataset(config.hf_dataset, split=split)
+            for idx, row in enumerate(dataset):
+                sol1, sol2 = row["sol1"], row["sol2"]
+                label = int(row["label"])  # 0 or 1
+                items.append(
+                    BenchmarkItem(
+                        id=f"piqa_{idx}",
+                        question=row["goal"],
+                        choices=[sol1, sol2],
+                        correct_answer=label,
+                        correct_answer_text=[sol1, sol2][label],
+                        subject="physical_intuition",
+                    )
+                )
+        except Exception as e:
+            print(f"Error loading PIQA: {e}")
+        return self._truncate(items, max_samples)
+
+    def load(self, config, max_samples=None):
+        return self._load_split(config, config.split, max_samples)
+
+    def get_few_shot_examples(self, config, n=5):
+        return self._load_split(config, config.few_shot_split, max_samples=n)
+
+
+class ARCEasyLoader(BaseBenchmarkLoader):
+    """Loader for ARC-Easy (same format as ARC-Challenge, different subset)."""
+
+    def _load_split(self, config, split, max_samples=None):
+        items = []
+        try:
+            dataset = load_dataset(config.hf_dataset, config.hf_subset, split=split)
+            for idx, row in enumerate(dataset):
+                choices = list(row["choices"]["text"])
+                labels = list(row["choices"]["label"])
+                answer_key = row["answerKey"]
+                answer_idx = labels.index(answer_key) if answer_key in labels else 0
+                items.append(
+                    BenchmarkItem(
+                        id=row.get("id", f"arc_easy_{idx}"),
+                        question=row["question"],
+                        choices=choices,
+                        correct_answer=answer_idx,
+                        correct_answer_text=choices[answer_idx]
+                        if answer_idx < len(choices)
+                        else "",
+                        subject="science",
+                    )
+                )
+        except Exception as e:
+            print(f"Error loading ARC-Easy: {e}")
+        return self._truncate(items, max_samples)
+
+    def load(self, config, max_samples=None):
+        return self._load_split(config, config.split, max_samples)
+
+    def get_few_shot_examples(self, config, n=25):
+        return self._load_split(config, config.few_shot_split, max_samples=n)
+
+
+class TriviaQALoader(BaseBenchmarkLoader):
+    """Loader for TriviaQA (open-domain factual QA, generation format)."""
+
+    def _load_split(self, config, split, max_samples=None):
+        items = []
+        try:
+            dataset = load_dataset(config.hf_dataset, config.hf_subset, split=split)
+            for idx, row in enumerate(dataset):
+                answer = row["answer"]
+                canonical = answer.get("value", "")
+                # Prefer normalized_aliases for robust matching; fall back to aliases
+                aliases = list(
+                    answer.get("normalized_aliases")
+                    or answer.get("aliases")
+                    or []
+                )
+                if canonical and canonical.lower() not in [a.lower() for a in aliases]:
+                    aliases = [canonical] + aliases
+                items.append(
+                    BenchmarkItem(
+                        id=row.get("question_id", f"triviaqa_{idx}"),
+                        question=row["question"],
+                        choices=[],
+                        correct_answer=-1,
+                        correct_answer_text=canonical,
+                        subject="factual_knowledge",
+                        metadata={"aliases": aliases},
+                    )
+                )
+        except Exception as e:
+            print(f"Error loading TriviaQA: {e}")
+        return self._truncate(items, max_samples)
+
+    def load(self, config, max_samples=None):
+        return self._load_split(config, config.split, max_samples)
+
+    def get_few_shot_examples(self, config, n=5):
+        return self._load_split(config, config.few_shot_split, max_samples=n)
+
+
+class MATHLoader(BaseBenchmarkLoader):
+    """Loader for the MATH benchmark (competition-level math problems)."""
+
+    @staticmethod
+    def _extract_boxed(text: str) -> str:
+        """Extract content from the innermost \\boxed{...} accounting for nesting."""
+        match = re.search(r"\\boxed\{", text)
+        if not match:
+            return ""
+        start = match.end()
+        depth = 1
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:i]
+        return ""
+
+    def _load_split(self, config, split, max_samples=None):
+        items = []
+        try:
+            if config.hf_subset:
+                dataset = load_dataset(config.hf_dataset, config.hf_subset, split=split)
+            else:
+                dataset = load_dataset(config.hf_dataset, split=split)
+            for idx, row in enumerate(dataset):
+                problem = row.get("problem", row.get("question", ""))
+                solution = row.get("solution", "")
+                # Use explicit answer field when available; otherwise extract from solution
+                answer = row.get("answer") or self._extract_boxed(solution)
+                subject = row.get("type", row.get("subject", "mathematics"))
+                level = row.get("level", "")
+                items.append(
+                    BenchmarkItem(
+                        id=f"math_{idx}",
+                        question=problem,
+                        choices=[],
+                        correct_answer=-1,
+                        correct_answer_text=answer,
+                        subject=subject,
+                        metadata={"full_solution": solution, "level": level},
+                    )
+                )
+        except Exception as e:
+            print(f"Error loading MATH: {e}")
+        return self._truncate(items, max_samples)
+
+    def load(self, config, max_samples=None):
+        return self._load_split(config, config.split, max_samples)
+
+    def get_few_shot_examples(self, config, n=4):
+        return self._load_split(config, config.few_shot_split, max_samples=n)
+
+
+# =============================================================================
+# Code benchmark loaders
+# =============================================================================
+
+
+class HumanEvalLoader(BaseBenchmarkLoader):
+    """Loader for HumanEval (Python function synthesis, pass@1 via execution)."""
+
+    def load(self, config, max_samples=None):
+        items = []
+        try:
+            dataset = load_dataset(config.hf_dataset, split=config.split)
+            for idx, row in enumerate(dataset):
+                items.append(
+                    BenchmarkItem(
+                        id=row.get("task_id", f"humaneval_{idx}"),
+                        question=row["prompt"],
+                        choices=[],
+                        correct_answer=-1,
+                        correct_answer_text="",
+                        subject="coding",
+                        metadata={
+                            "test": row["test"],
+                            "entry_point": row["entry_point"],
+                            "canonical_solution": row["canonical_solution"],
+                        },
+                    )
+                )
+        except Exception as e:
+            print(f"Error loading HumanEval: {e}")
+        return self._truncate(items, max_samples)
+
+    def get_few_shot_examples(self, config, n=0):
+        return []  # HumanEval is evaluated 0-shot
+
+
+class MBPPLoader(BaseBenchmarkLoader):
+    """Loader for MBPP (Mostly Basic Python Programming)."""
+
+    def _load_split(self, config, split, max_samples=None):
+        items = []
+        try:
+            dataset = load_dataset(config.hf_dataset, config.hf_subset, split=split)
+            for idx, row in enumerate(dataset):
+                code = row.get("code", "")
+                items.append(
+                    BenchmarkItem(
+                        id=f"mbpp_{row.get('task_id', idx)}",
+                        question=row["text"],
+                        choices=[],
+                        correct_answer=-1,
+                        # Store canonical code as correct_answer_text for few-shot display
+                        correct_answer_text=code,
+                        subject="coding",
+                        metadata={
+                            "test_list": list(row.get("test_list", [])),
+                            "test_imports": list(row.get("test_imports", [])),
+                            "code": code,
+                        },
+                    )
+                )
+        except Exception as e:
+            print(f"Error loading MBPP: {e}")
+        return self._truncate(items, max_samples)
+
+    def load(self, config, max_samples=None):
+        return self._load_split(config, config.split, max_samples)
+
+    def get_few_shot_examples(self, config, n=3):
+        return self._load_split(config, config.few_shot_split, max_samples=n)
+
+
+# =============================================================================
 # Logic benchmark loaders
 # =============================================================================
 
@@ -554,12 +825,23 @@ class FOLIOLoader(BaseBenchmarkLoader):
 # =============================================================================
 
 LOADER_MAP = {
+    # Standard
     "mmlu": MMLULoader(),
     "arc_challenge": ARCChallengeLoader(),
     "hellaswag": HellaSwagLoader(),
     "winogrande": WinograndeLoader(),
     "gsm8k": GSM8KLoader(),
     "truthfulqa": TruthfulQALoader(),
+    # Additional standard (generalist / catastrophic-forgetting probes)
+    "boolq": BoolQLoader(),
+    "piqa": PIQALoader(),
+    "arc_easy": ARCEasyLoader(),
+    "triviaqa": TriviaQALoader(),
+    "math": MATHLoader(),
+    # Code
+    "humaneval": HumanEvalLoader(),
+    "mbpp": MBPPLoader(),
+    # Logic
     "logiqa": LogiQALoader(),
     "folio": FOLIOLoader(),
 }

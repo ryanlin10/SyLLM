@@ -88,7 +88,7 @@ class ModelEvaluator:
             parsed, error = safe_parse_model_output(output)
             if parsed is None:
                 parse_errors += 1
-                parsed = {"premises": [], "conclusion": ""}
+                parsed = {"premises": [], "content": ""}
             parsed_outputs.append(parsed)
         
         parse_success_rate = 1.0 - (parse_errors / len(model_outputs))
@@ -200,8 +200,8 @@ class ModelEvaluator:
         total = 0
         
         for parsed, gt in zip(parsed_outputs, ground_truth):
-            pred_conclusion = parsed.get("conclusion", "")
-            gt_conclusion_data = gt.get("conclusion", {})
+            pred_conclusion = parsed.get("content") or parsed.get("conclusion", "")
+            gt_conclusion_data = gt.get("content") or gt.get("conclusion", {})
             
             if isinstance(gt_conclusion_data, dict):
                 gt_conclusion = gt_conclusion_data.get("text", "")
@@ -239,7 +239,7 @@ class ModelEvaluator:
             
             confidence = verdict["confidence"]
             # Determine correctness (simplified)
-            gt_conclusion = gt.get("conclusion", {})
+            gt_conclusion = gt.get("content") or gt.get("conclusion", {})
             if isinstance(gt_conclusion, dict):
                 gt_type = gt_conclusion.get("type", "entailment")
             else:
