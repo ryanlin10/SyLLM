@@ -37,6 +37,7 @@ from mistral_common.protocol.instruct.messages import (
 )
 from mistral_common.protocol.instruct.request import ChatCompletionRequest
 from mistral_common.tokens.tokenizers.mistral import MistralTokenizer
+from mistral_common.tokens.tokenizers.utils import download_tokenizer_from_hf_hub
 
 from transformers import (
     AutoTokenizer,
@@ -236,7 +237,7 @@ class LoRAConfig:
 @dataclass
 class TrainConfig:
     """Training configuration."""
-    output_dir: str = "./models/lora_finetuned"
+    output_dir: str = "/tmp/lora_finetuned"
     num_epochs: int = 3
     batch_size: int = 4
     gradient_accumulation_steps: int = 4
@@ -258,12 +259,15 @@ class TrainConfig:
     greater_is_better: bool = False
     early_stopping_patience: int = 3
     resume_from_checkpoint: Optional[str] = None
+    init_adapter_path: Optional[str] = None  # Load prior LoRA adapter as init for stage continuation
     use_wandb: bool = True
     wandb_project: str = "syllm-lora-finetune"
     wandb_run_name: Optional[str] = None
     seed: int = 42
     use_8bit: bool = False
     use_4bit: bool = False
+    cache_dir: Optional[str] = None
+    hf_token: Optional[str] = None
 
 
 # =============================================================================
@@ -273,13 +277,14 @@ class TrainConfig:
 class DataLoader:
     """Data loader with Mistral chat template support for logical reasoning training."""
 
-    def __init__(self, config: DataConfig, tokenizer, model_name: str):
+    def __init__(self, config: DataConfig, tokenizer, model_name: str, cache_dir: Optional[str] = None, hf_token: Optional[str] = None):
         self.config = config
         self.tokenizer = tokenizer
         self.model_name = model_name
         # Initialize Mistral tokenizer for chat template formatting (same model as being finetuned)
         print(f"Initializing Mistral tokenizer from {model_name}...")
-        self.mistral_tokenizer = MistralTokenizer.from_hf_hub(model_name)
+        tokenizer_path = download_tokenizer_from_hf_hub(model_name, token=hf_token, cache_dir=cache_dir)
+        self.mistral_tokenizer = MistralTokenizer.from_file(tokenizer_path)
 
     def load_jsonl(self, path: str) -> List[Dict[str, Any]]:
         """Load data from JSONL file."""
@@ -676,6 +681,8 @@ def setup_model(
         model_name,
         trust_remote_code=True,
         use_fast=True,
+        cache_dir=train_config.cache_dir,
+        token=train_config.hf_token,
     )
 
     # Add pad token if missing
@@ -714,6 +721,8 @@ def setup_model(
             device_map="auto",
             trust_remote_code=True,
             quantization_config=quantization_config,
+            cache_dir=train_config.cache_dir,
+            token=train_config.hf_token,
         )
     else:
         model = AutoModelForCausalLM.from_pretrained(
@@ -722,6 +731,8 @@ def setup_model(
             device_map="auto",
             trust_remote_code=True,
             quantization_config=quantization_config,
+            cache_dir=train_config.cache_dir,
+            token=train_config.hf_token,
         )
 
     # Prepare for k-bit training if using quantization
@@ -731,25 +742,28 @@ def setup_model(
     # Get target modules
     target_modules = lora_config.target_modules or model_info.get("target_modules", ["q_proj", "v_proj"])
 
-    # Setup LoRA
+    # Setup LoRA — either from a prior adapter (stage continuation) or fresh
     print(f"\n=== Setting up LoRA ===")
-    print(f"Rank: {lora_config.rank}, Alpha: {lora_config.alpha}")
-    print(f"Target modules: {target_modules}")
-
-    peft_config = LoraConfig(
-        task_type=TaskType.CAUSAL_LM,
-        r=lora_config.rank,
-        lora_alpha=lora_config.alpha,
-        lora_dropout=lora_config.dropout,
-        target_modules=target_modules,
-        bias=lora_config.bias,
-        modules_to_save=None,  # Optional: add embed_tokens if training with new tokens
-    )
-
-    print(f"Dropout: {lora_config.dropout}, Bias: {lora_config.bias}")
-
-    model = get_peft_model(model, peft_config)
-    model.print_trainable_parameters()
+    if train_config.init_adapter_path:
+        adapter_path = train_config.init_adapter_path
+        print(f"Loading prior LoRA adapter from: {adapter_path}")
+        model = PeftModel.from_pretrained(model, adapter_path, is_trainable=True)
+        model.print_trainable_parameters()
+    else:
+        print(f"Rank: {lora_config.rank}, Alpha: {lora_config.alpha}")
+        print(f"Target modules: {target_modules}")
+        peft_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            r=lora_config.rank,
+            lora_alpha=lora_config.alpha,
+            lora_dropout=lora_config.dropout,
+            target_modules=target_modules,
+            bias=lora_config.bias,
+            modules_to_save=None,
+        )
+        print(f"Dropout: {lora_config.dropout}, Bias: {lora_config.bias}")
+        model = get_peft_model(model, peft_config)
+        model.print_trainable_parameters()
 
     # Enable gradient checkpointing
     if train_config.gradient_checkpointing:
@@ -784,7 +798,9 @@ def train(
         print(f"  Format: <PREMISE>...</PREMISE> -> <CONCLUSION>...</CONCLUSION>")
     else:
         print("Training mode: FULL TEXT (loss computed on all tokens)")
-    data_loader = DataLoader(data_config, tokenizer, model_info["name"])
+    data_loader = DataLoader(data_config, tokenizer, model_info["name"],
+                             cache_dir=train_config.cache_dir,
+                             hf_token=train_config.hf_token)
     datasets = data_loader.create_datasets()
 
     # Tokenize datasets
@@ -1014,7 +1030,7 @@ Training Mode:
                        help="System prompt for logical reasoning training")
 
     # Training configuration
-    parser.add_argument("--output-dir", type=str, default="./models/lora_finetuned",
+    parser.add_argument("--output-dir", type=str, default="/tmp/lora_finetuned",
                        help="Output directory for saved models")
     parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=4, help="Batch size per device")
@@ -1042,8 +1058,16 @@ Training Mode:
 
     # Other
     parser.add_argument("--resume", type=str, help="Path to checkpoint to resume from")
+    parser.add_argument(
+        "--init-adapter", type=str,
+        help="Path to a prior LoRA adapter directory to use as initialization (stage 0->1 continuation)"
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--config", type=str, help="Path to YAML config file")
+    parser.add_argument("--cache-dir", type=str,
+                       help="Directory for caching downloaded models (overrides HF_HOME/TRANSFORMERS_CACHE)")
+    parser.add_argument("--hf-token", type=str,
+                       help="HuggingFace API token for gated models (or set HF_TOKEN env var)")
 
     return parser.parse_args()
 
@@ -1056,6 +1080,17 @@ def main():
     if args.list_models:
         list_available_models()
         return
+
+    # Resolve HF token: CLI arg > HF_TOKEN env var > HUGGING_FACE_HUB_TOKEN env var
+    hf_token = args.hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+
+    # Redirect model cache early so all HuggingFace downloads go to the right place
+    if args.cache_dir:
+        os.environ["HF_HOME"] = args.cache_dir
+        os.environ["HUGGINGFACE_HUB_CACHE"] = args.cache_dir
+    if hf_token:
+        os.environ["HF_TOKEN"] = hf_token
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token
 
     # Load config file if provided
     file_config = {}
@@ -1103,7 +1138,10 @@ def main():
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run_name,
         resume_from_checkpoint=args.resume,
+        init_adapter_path=args.init_adapter,
         seed=args.seed,
+        cache_dir=args.cache_dir,
+        hf_token=hf_token,
     )
 
     # Validate we have data

@@ -12,8 +12,7 @@ from src.utils.config_loader import load_config
 
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a logical reasoning assistant. Given the following premises, "
-    "derive their valid conclusion."
+    'You are a helpful assistant that can answer questions and help with tasks.'
 )
 
 
@@ -31,6 +30,22 @@ def main():
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p")
     parser.add_argument(
         "--tensor-parallel", "-tp", type=int, default=1, help="Tensor parallel size"
+    )
+    parser.add_argument(
+        "--gpu-memory-utilization", type=float, default=0.9,
+        help="Fraction of GPU memory for vLLM (default: 0.9, auto-lowered if insufficient free VRAM)"
+    )
+    parser.add_argument(
+        "--max-model-len", type=int, default=None,
+        help="Max sequence length (reduces KV cache memory; default: model's native max)"
+    )
+    parser.add_argument(
+        "--download-dir", type=str, default=None,
+        help="Directory for vLLM model weight cache (e.g. /tmp/hf_cache to reuse an existing download)"
+    )
+    parser.add_argument(
+        "--hf-token", type=str, default=None,
+        help="HuggingFace token for gated models (or set HF_TOKEN env var)"
     )
     args = parser.parse_args()
 
@@ -54,6 +69,10 @@ def main():
         model_path=model_path,
         lora_adapter_path=lora_adapter_path,
         tensor_parallel_size=args.tensor_parallel,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+        max_model_len=args.max_model_len,
+        download_dir=args.download_dir,
+        hf_token=args.hf_token,
     )
 
     message = args.message

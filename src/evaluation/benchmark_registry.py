@@ -121,6 +121,7 @@ BENCHMARK_REGISTRY: Dict[str, BenchmarkConfig] = {
         num_choices=0,
         description="Grade School Math",
         random_baseline=0.0,
+        max_tokens_override=512,
         tier=BenchmarkTier.EXTENDED,
     ),
     "truthfulqa": BenchmarkConfig(

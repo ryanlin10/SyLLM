@@ -59,9 +59,10 @@ _PREMISE_RE = re.compile(
 _CONCLUSION_RE = re.compile(
     r"<CONCLUSION>\s*(.*?)\s*</CONCLUSION>", re.DOTALL | re.IGNORECASE
 )
-# Pattern to find premise/conclusion tags in order for segment extraction
+# Pattern to find premise/conclusion/assume/discharge tags in order for segment extraction
 _TAG_RE = re.compile(
-    r"<(PREMISE|CONCLUSION)>\s*(.*?)\s*</\1>", re.DOTALL | re.IGNORECASE
+    r"<(PREMISE|CONCLUSION|ASSUME|DISCHARGE)>\s*(.*?)\s*</\1>",
+    re.DOTALL | re.IGNORECASE,
 )
 # Multiple-choice answer extraction: "Answer: A", "(B)", "the answer is C", etc.
 _MC_ANSWER_RE = re.compile(
@@ -202,35 +203,53 @@ class SoundnessReward:
 
         Each segment consists of the ``<PREMISE>`` tags that appear before
         a ``<CONCLUSION>`` tag (back to the previous conclusion or start
-        of text).  This preserves the natural reading order of a proof
-        trace where each conclusion depends on the premises directly
-        preceding it.
+        of text).  ``<ASSUME>`` tags push an assumption into scope for all
+        subsequent segments until the matching ``<DISCHARGE>`` removes it.
+        This ensures that sub-steps inside assumption blocks are verified
+        with the assumption available as a premise.
 
         Returns
         -------
         list of Segment
             One segment per ``<CONCLUSION>`` tag found.  Segments with no
-            premises are still included (they will fail verification).
+            premises (after injecting active assumptions) are still included
+            (they will fail verification unless the assumption itself
+            trivially entails the conclusion).
         """
         segments: List[Segment] = []
         pending_premises: List[str] = []
+        # Assumptions currently in scope (pushed by <ASSUME>, popped by <DISCHARGE>)
+        active_assumptions: List[str] = []
 
         for match in _TAG_RE.finditer(text):
             tag_name = match.group(1).upper()
             content = match.group(2).strip()
 
-            if tag_name == "PREMISE":
+            if tag_name == "ASSUME":
+                active_assumptions.append(content)
+            elif tag_name == "PREMISE":
                 pending_premises.append(content)
             elif tag_name == "CONCLUSION":
+                # Inject currently-active assumptions as extra premises so that
+                # every step inside an assumption block is verifiable with the
+                # assumption in scope.  This makes the assumption-introduction
+                # step itself check ``A |= A`` (trivially valid) and ensures
+                # inner steps have the assumed formula available to Z3.
+                all_premises = active_assumptions + pending_premises
                 segments.append(
                     Segment(
-                        premises=list(pending_premises),
+                        premises=all_premises,
                         conclusion=content,
                     )
                 )
-                # Previous conclusions become available as implicit premises
-                # for subsequent steps, but we start fresh for explicit tags.
                 pending_premises = []
+            elif tag_name == "DISCHARGE":
+                # Remove the discharged assumption from scope (search from the
+                # end so nested assumptions with the same text are handled LIFO).
+                for i in range(len(active_assumptions) - 1, -1, -1):
+                    if active_assumptions[i] == content:
+                        active_assumptions.pop(i)
+                        break
 
         return segments
 

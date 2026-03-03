@@ -80,7 +80,12 @@ Examples:
         "--gpu-memory-utilization", type=float, default=0.9, help="GPU memory fraction"
     )
     model_group.add_argument(
-        "--max-model-len", type=int, default=None, help="Max sequence length"
+        "--max-model-len", type=int, default=None,
+        help="Max sequence length (recommend 4096–8192 for benchmarks; reduces KV-cache and improves throughput)"
+    )
+    model_group.add_argument(
+        "--enforce-eager", action="store_true",
+        help="Disable CUDA graph compilation (2–4× slower; use only if compilation cache disk is full)"
     )
 
     # Benchmark selection
@@ -122,7 +127,8 @@ Examples:
         "--max-tokens", type=int, default=256, help="Max tokens to generate per item"
     )
     eval_group.add_argument(
-        "--batch-size", type=int, default=32, help="Inference batch size"
+        "--batch-size", type=int, default=512,
+        help="Inference batch size submitted to vLLM per call (default: 512; larger values improve GPU utilisation)"
     )
     eval_group.add_argument(
         "--no-staged", action="store_true", help="Disable staged (probe + full) evaluation"
@@ -268,6 +274,7 @@ def main():
         tensor_parallel_size=args.tensor_parallel,
         gpu_memory_utilization=args.gpu_memory_utilization,
         max_model_len=args.max_model_len,
+        enforce_eager=args.enforce_eager,
     )
     print("Model loaded.\n")
 
@@ -308,13 +315,12 @@ def main():
     text_report = reporter.generate_text_report()
 
     # Determine output path
-    output_dir = project_root / "outputs"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     if args.output:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
     else:
+        output_dir = project_root / "outputs"
+        output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = output_dir / f"benchmark_comparison_{timestamp}.txt"
 
