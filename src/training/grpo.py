@@ -327,13 +327,25 @@ class GRPOTrainer:
             )
 
         logger.info("Loading base model: %s", hf_name)
-        base_model = AutoModelForCausalLM.from_pretrained(
-            hf_name,
-            torch_dtype=dtype,
-            device_map="auto",
-            trust_remote_code=True,
-            quantization_config=quant_config,
-        )
+        model_class_name = model_info.get("model_class")
+        if model_class_name == "Mistral3ForConditionalGeneration":
+            from transformers.models.mistral3.modeling_mistral3 import Mistral3ForConditionalGeneration
+            logger.info("Using special model class: %s", model_class_name)
+            base_model = Mistral3ForConditionalGeneration.from_pretrained(
+                hf_name,
+                torch_dtype=dtype,
+                device_map="auto",
+                trust_remote_code=True,
+                quantization_config=quant_config,
+            )
+        else:
+            base_model = AutoModelForCausalLM.from_pretrained(
+                hf_name,
+                torch_dtype=dtype,
+                device_map="auto",
+                trust_remote_code=True,
+                quantization_config=quant_config,
+            )
 
         # Tokenizer.
         self.tokenizer = AutoTokenizer.from_pretrained(hf_name, trust_remote_code=True)
@@ -649,19 +661,21 @@ class GRPOTrainer:
             sequences = all_sequences[i]           # (G, seq_len)
             old_lps = all_old_log_probs[i]         # (G, gen_len)
             gen_mask = all_gen_masks[i]             # (G, gen_len)
-            prompt_len = prompt_lengths[i]
-            gen_ids = sequences[:, prompt_len:]     # (G, gen_len)
+            # Use the padded prompt length that was actually used during generation
+            # (which may differ from prompt_lengths[i] due to left-padding in batches).
+            padded_prompt_len = sequences.shape[1] - old_lps.shape[1]
+            gen_ids = sequences[:, padded_prompt_len:]  # (G, gen_len)
             group_adv = advantages[i * G : (i + 1) * G]  # (G,)
 
             # Current policy log probs.
             new_lps = self._compute_log_probs(
                 self.model, sequences,
                 torch.ones_like(sequences, dtype=torch.long),
-                gen_ids, prompt_len,
+                gen_ids, padded_prompt_len,
             )  # (G, gen_len)
 
             # Reference log probs (adapter-disabled base model).
-            ref_lps = self._compute_ref_log_probs(sequences, gen_ids, prompt_len)
+            ref_lps = self._compute_ref_log_probs(sequences, gen_ids, padded_prompt_len)
 
             # Per-token importance sampling ratio.
             ratio = torch.exp(new_lps - old_lps.detach())  # (G, gen_len)
