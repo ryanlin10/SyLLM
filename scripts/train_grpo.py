@@ -271,6 +271,16 @@ def parse_args() -> argparse.Namespace:
             "(optimistic process reward = 1.0). Removes synchronous Z3 blocking."
         ),
     )
+    parser.add_argument(
+        "--n-verify-workers",
+        type=int,
+        default=16,
+        help=(
+            "Number of worker threads for parallel Z3 segment verification. "
+            "Z3's C extension releases the GIL, so threads give true parallelism. "
+            "Set to 0 for sequential (legacy) verification. (default: 16)"
+        ),
+    )
 
     # -- Precision / memory ---------------------------------------------------
     precision_group = parser.add_mutually_exclusive_group()
@@ -321,6 +331,21 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=200,
         help="Save a checkpoint every N steps (default: 200)",
+    )
+    parser.add_argument(
+        "--sample-steps",
+        type=int,
+        default=50,
+        help=(
+            "Generate and log qualitative sample completions every N steps "
+            "(0 = disabled, default: 50)"
+        ),
+    )
+    parser.add_argument(
+        "--n-sample-prompts",
+        type=int,
+        default=2,
+        help="Number of prompts to sample per qualitative logging event (default: 2)",
     )
 
     # -- W&B ------------------------------------------------------------------
@@ -394,6 +419,8 @@ def main() -> None:
         output_dir=args.output_dir,
         logging_steps=args.logging_steps,
         save_steps=args.save_steps,
+        sample_steps=args.sample_steps,
+        n_sample_prompts=args.n_sample_prompts,
         seed=args.seed,
         fp16=args.fp16 and not args.bf16,
         bf16=args.bf16,
@@ -408,6 +435,7 @@ def main() -> None:
         wrong_reward=args.wrong_reward,
         skip_z3_verify=args.skip_z3_verify,
         use_flash_attention=not args.no_flash_attn,
+        n_verify_workers=args.n_verify_workers,
     )
 
     # -- Log configuration summary --------------------------------------------
@@ -436,6 +464,7 @@ def main() -> None:
     logger.info("  precision:      %s", precision)
     logger.info("  flash_attn:     %s", config.use_flash_attention)
     logger.info("  skip_z3:        %s", config.skip_z3_verify)
+    logger.info("  n_verify_workers: %d", config.n_verify_workers)
     logger.info("===================================")
 
     # -- W&B init -------------------------------------------------------------

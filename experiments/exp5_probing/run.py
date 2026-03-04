@@ -201,7 +201,7 @@ def extract_hidden_states(
         trust_remote_code=True,
     )
     try:
-        from transformers import Mistral3ForConditionalGeneration
+        from transformers.models.mistral3.modeling_mistral3 import Mistral3ForConditionalGeneration
         try:
             model = Mistral3ForConditionalGeneration.from_pretrained(
                 model_name, attn_implementation="flash_attention_2", **load_kwargs

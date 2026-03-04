@@ -22,6 +22,7 @@ Reference:
 
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -158,6 +159,8 @@ class GRPOConfig:
     output_dir: str = "./outputs/grpo"
     logging_steps: int = 10
     save_steps: int = 200
+    sample_steps: int = 50       # log qualitative sample completions every N steps (0 = off)
+    n_sample_prompts: int = 2    # number of prompts to sample per logging event
     seed: int = 42
 
     # Reward
@@ -260,6 +263,7 @@ class GRPOTrainer:
         logger.info("  group_size=%d  clip_eps=%.3f  kl_coeff=%.4f", cfg.group_size, cfg.clip_epsilon, cfg.kl_coeff)
         logger.info("  batch_size=%d  grad_accum=%d  lr=%.2e", cfg.batch_size, cfg.gradient_accumulation_steps, cfg.learning_rate)
 
+        self._train_data = train_data   # stored for use by _log_samples
         total_prompts = len(train_data)
         self.global_step = 0
         running_stats: Dict[str, float] = {
@@ -305,9 +309,24 @@ class GRPOTrainer:
                         wandb.log(log_dict, step=self.global_step)
                     running_stats = {k: 0.0 for k in running_stats}
 
+                # Qualitative sample logging.
+                if cfg.sample_steps > 0 and self.global_step % cfg.sample_steps == 0:
+                    self._log_samples(self.global_step)
+
                 # Save checkpoint.
                 if cfg.save_steps > 0 and self.global_step % cfg.save_steps == 0:
                     self._save_checkpoint(output_dir / f"checkpoint-{self.global_step}")
+
+            # Flush any uncommitted accumulated gradients at epoch boundary.
+            if cfg.gradient_accumulation_steps > 1 and \
+                    self.global_step % cfg.gradient_accumulation_steps != 0:
+                torch.nn.utils.clip_grad_norm_(
+                    [p for p in self.model.parameters() if p.requires_grad],
+                    cfg.max_grad_norm,
+                )
+                self.optimizer.step()
+                self.scheduler.step()
+                self.optimizer.zero_grad()
 
             mean_reward = sum(epoch_rewards) / max(len(epoch_rewards), 1)
             logger.info("Epoch %d/%d complete  --  mean reward = %.4f", epoch + 1, cfg.num_epochs, mean_reward)
@@ -465,9 +484,8 @@ class GRPOTrainer:
             weight_decay=cfg.weight_decay,
         )
 
-        total_steps = (
-            (num_train_examples // cfg.batch_size) * cfg.num_epochs
-        ) // cfg.gradient_accumulation_steps
+        batches_per_epoch = math.ceil(num_train_examples / cfg.batch_size)
+        total_steps = (batches_per_epoch * cfg.num_epochs) // cfg.gradient_accumulation_steps
         warmup_steps = int(total_steps * cfg.warmup_ratio)
 
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -545,6 +563,11 @@ class GRPOTrainer:
         gen_mask  = (gen_ids != self.tokenizer.pad_token_id).float()  # (B*G, gen_len)
         gen_len   = gen_ids.shape[1]
 
+        # Full-sequence attention mask for log-prob forward passes:
+        # prompt portion uses tiled_mask (0=pad, 1=real, matching generation-time),
+        # generated portion uses gen_mask (0=post-EOS pad, 1=real token).
+        full_seq_mask = torch.cat([tiled_mask, gen_mask.long()], dim=1)  # (B*G, P + gen_len)
+
         # Old log-probs extracted from the generation-time logits — avoids a
         # separate forward pass.  Process one time-step at a time to avoid
         # materialising the full (B*G, gen_len, vocab) tensor (~8-17 GB at
@@ -562,7 +585,7 @@ class GRPOTrainer:
                 old_lps = self._compute_log_probs(
                     self.model,
                     sequences,
-                    torch.ones_like(sequences, dtype=torch.long),
+                    full_seq_mask,
                     gen_ids, P,
                 )
 
@@ -602,12 +625,12 @@ class GRPOTrainer:
         new_lps = self._compute_log_probs(
             self.model,
             sequences,
-            torch.ones_like(sequences, dtype=torch.long),
+            full_seq_mask,
             gen_ids, P,
         )  # (B*G, gen_len)
 
         # Reference policy (adapter disabled, no grad).
-        ref_lps = self._compute_ref_log_probs(sequences, gen_ids, P)  # (B*G, gen_len)
+        ref_lps = self._compute_ref_log_probs(sequences, gen_ids, P, full_seq_mask)  # (B*G, gen_len)
 
         # ------------------------------------------------------------------ #
         # 6. GRPO loss (clipped surrogate + KL) averaged over real tokens.   #
@@ -693,6 +716,7 @@ class GRPOTrainer:
         sequences: torch.Tensor,
         gen_ids: torch.Tensor,
         prompt_len: int,
+        attention_mask: torch.Tensor,
     ) -> torch.Tensor:
         """Compute per-token log probs under the reference policy.
 
@@ -705,7 +729,7 @@ class GRPOTrainer:
             ref_lps = self._compute_log_probs(
                 self.model,
                 sequences,
-                torch.ones_like(sequences, dtype=torch.long),
+                attention_mask,
                 gen_ids,
                 prompt_len,
             )
@@ -740,6 +764,69 @@ class GRPOTrainer:
                 f1 = 2 * precision * recall / (precision + recall)
                 scores.append(f1)
         return torch.tensor(scores, dtype=torch.float32, device=self.device)
+
+    # ------------------------------------------------------------------
+    # Qualitative monitoring
+    # ------------------------------------------------------------------
+
+    def _log_samples(self, step: int) -> None:
+        """Generate and log sample completions for qualitative monitoring.
+
+        Picks ``cfg.n_sample_prompts`` examples at random from the training
+        data, generates with greedy decoding (deterministic), and logs the
+        prompt tail + completion to the logger and to W&B as a Table.
+        """
+        cfg = self.config
+        train_data = getattr(self, "_train_data", None)
+        if not train_data:
+            return
+
+        n = min(cfg.n_sample_prompts, len(train_data))
+        if NUMPY_AVAILABLE:
+            rng = np.random.default_rng(seed=step)  # reproducible per step
+            indices = rng.choice(len(train_data), n, replace=False).tolist()
+        else:
+            indices = list(range(n))
+        samples = [train_data[i] for i in indices]
+
+        self.model.eval()
+        rows = []
+        with torch.no_grad():
+            for ex in samples:
+                prompt = ex["prompt"]
+                target = ex.get("target", "")
+                enc = self.tokenizer(
+                    [prompt],
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=cfg.max_prompt_length,
+                ).to(self.device)
+                gen_out = self.model.generate(
+                    input_ids=enc["input_ids"],
+                    attention_mask=enc["attention_mask"],
+                    max_new_tokens=cfg.max_gen_length,
+                    do_sample=False,  # greedy — deterministic snapshot of current policy
+                    pad_token_id=self.tokenizer.pad_token_id,
+                )
+                completion = self.tokenizer.decode(
+                    gen_out[0, enc["input_ids"].shape[1]:],
+                    skip_special_tokens=True,
+                )
+                # Show the tail of the prompt (most relevant context).
+                prompt_tail = prompt[-300:] if len(prompt) > 300 else prompt
+                rows.append((prompt_tail, completion, target))
+                logger.info(
+                    "SAMPLE step=%d\n  PROMPT (tail): %s\n  COMPLETION: %s\n  TARGET: %s",
+                    step, prompt_tail, completion, target,
+                )
+        self.model.train()
+
+        if WANDB_AVAILABLE and wandb.run is not None:
+            tbl = wandb.Table(columns=["step", "prompt_tail", "completion", "target"])
+            for prompt_tail, completion, target in rows:
+                tbl.add_data(step, prompt_tail, completion, target)
+            wandb.log({"grpo/samples": tbl}, step=step)
 
     # ------------------------------------------------------------------
     # Checkpointing

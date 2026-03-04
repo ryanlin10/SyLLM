@@ -52,14 +52,59 @@ the premises of that inference step.
 
 import math
 import re
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    import multiprocessing as _mp
     _FUTURES_AVAILABLE = True
 except ImportError:
     _FUTURES_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+# Module-level worker functions (must be top-level for ProcessPoolExecutor
+# pickling with "spawn" start method).
+#
+# WHY ProcessPoolExecutor?
+# Z3's Python bindings use a module-global Context (z3.main_ctx()) by default.
+# All Solver / BoolRef objects created without an explicit ctx share this
+# global context.  Calling solver.check() from multiple threads simultaneously
+# corrupts Z3's internal AST, causing C++ assertion violations.
+# ProcessPoolExecutor with "spawn" gives each worker its own Python process
+# (and thus its own Z3 global context), eliminating the race completely.
+# The IPC overhead for string serialisation is negligible vs Z3 solve time.
+# ---------------------------------------------------------------------------
+
+# Per-worker process state (populated by _init_verify_worker).
+_WORKER_PIPELINE: Any = None
+
+
+def _init_verify_worker(timeout_ms: int) -> None:
+    """Run once in each worker process to initialise the Z3 verifier."""
+    global _WORKER_PIPELINE
+    # Add project root to sys.path so relative imports work in spawned process.
+    _project_root = str(Path(__file__).resolve().parent.parent.parent)
+    if _project_root not in sys.path:
+        sys.path.insert(0, _project_root)
+    try:
+        from src.verification.verifier import VerifierPipeline, VerifierConfig  # noqa: PLC0415
+        _WORKER_PIPELINE = VerifierPipeline(VerifierConfig(timeout_ms=timeout_ms))
+    except Exception:
+        _WORKER_PIPELINE = None  # fall back to unsound for this worker
+
+
+def _verify_segment_worker(premises: List[str], conclusion: str) -> bool:
+    """Verify one inference step inside a worker process."""
+    if _WORKER_PIPELINE is None or not premises or not conclusion:
+        return False
+    try:
+        return _WORKER_PIPELINE.verify_inference(premises, conclusion)
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -168,13 +213,33 @@ class SoundnessReward:
             self.verifier = None
             self._z3_available = False
 
-        # Thread pool for parallel Z3 verification.  Z3's C extension releases
-        # the GIL during solver.check(), so threads allow true parallelism.
-        # With B*G=16 responses x ~5 segments each = 80 sequential Z3 calls at
-        # 5 s timeout → up to 400 s per step.  With 16 workers: ~25 s.
+        # Process pool for parallel Z3 verification.
+        # Z3's global context is NOT thread-safe; using ThreadPoolExecutor causes
+        # C++ assertion violations.  ProcessPoolExecutor with "spawn" gives each
+        # worker its own Python process and Z3 global context — no shared state.
+        # Startup cost is paid once; workers are reused across all training steps.
+        # With B*G=16 responses × ~5 segments each = 80 calls: at 16 workers,
+        # effective wait ≈ ceil(80/16) × avg_z3_time instead of 80 × avg_z3_time.
         self._pool: Optional[Any] = None
+        self._pool_timeout_ms: int = 5000
+        self._n_verify_workers: int = n_verify_workers  # stored for pool recreation
         if n_verify_workers > 0 and not skip_verify and self._z3_available and _FUTURES_AVAILABLE:
-            self._pool = ThreadPoolExecutor(max_workers=n_verify_workers)
+            try:
+                spawn_ctx = _mp.get_context("spawn")
+                self._pool = ProcessPoolExecutor(
+                    max_workers=n_verify_workers,
+                    mp_context=spawn_ctx,
+                    initializer=_init_verify_worker,
+                    initargs=(self._pool_timeout_ms,),
+                )
+            except Exception as exc:
+                # Graceful fallback: log and continue with sequential verification.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Could not create process pool for Z3 verification "
+                    "(falling back to sequential): %s", exc
+                )
+                self._pool = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -294,6 +359,34 @@ class SoundnessReward:
             for o, t, tt in zip(outputs, targets, task_types)
         ]
 
+    def _try_recreate_pool(self) -> bool:
+        """Try to recreate the process pool after a failure.
+
+        Returns True if a new pool was successfully created, False otherwise.
+        On failure ``self._pool`` is set to None (sequential fallback).
+        """
+        import logging
+        _logger = logging.getLogger(__name__)
+        if not _FUTURES_AVAILABLE or self._n_verify_workers <= 0:
+            return False
+        try:
+            spawn_ctx = _mp.get_context("spawn")
+            self._pool = ProcessPoolExecutor(
+                max_workers=self._n_verify_workers,
+                mp_context=spawn_ctx,
+                initializer=_init_verify_worker,
+                initargs=(self._pool_timeout_ms,),
+            )
+            _logger.info(
+                "Process pool recreated successfully (%d workers).",
+                self._n_verify_workers,
+            )
+            return True
+        except Exception as exc:
+            _logger.warning("Failed to recreate process pool: %s", exc)
+            self._pool = None
+            return False
+
     def _score_batch_parallel(
         self,
         outputs: List[str],
@@ -305,23 +398,52 @@ class SoundnessReward:
         Strategy
         --------
         1. Extract segments from all outputs up front (pure Python, fast).
-        2. Submit every ``(premises, conclusion)`` pair to the thread pool.
-        3. Collect results via ``as_completed`` — Z3's C extension releases the
-           GIL during ``solver.check()``, so worker threads run truly in
-           parallel on multi-core machines.
+        2. Submit every ``(premises, conclusion)`` pair to the process pool.
+        3. Collect results via ``as_completed``.
         4. Accumulate ``sound_steps`` per output and build ``RewardResult``
            objects using the same outcome-gated formula as ``score()``.
+
+        Pool resilience
+        ---------------
+        If a worker process dies (BrokenProcessPool), we attempt to recreate
+        the pool once and retry.  If recreation fails or the recreated pool
+        also breaks, we null out the pool and fall back to sequential scoring
+        for this batch and all subsequent batches.
         """
+        import logging
+        _logger = logging.getLogger(__name__)
+
         # 1. Extract all segments upfront (fast, no Z3).
         all_segs: List[List[Segment]] = [self._extract_segments(o) for o in outputs]
 
-        # 2. Submit all segment verifications to the thread pool.
-        #    Track futures → output index so we can aggregate per-output.
+        # 2. Submit all segment verifications to the process pool.
+        #    Retry once on pool failure (worker may have died transiently).
         futures_to_idx: Dict[Any, int] = {}
-        for i, segs in enumerate(all_segs):
-            for seg in segs:
-                fut = self._pool.submit(self._verify_segment, seg)
-                futures_to_idx[fut] = i
+        for attempt in range(2):
+            try:
+                futures_to_idx = {}
+                for i, segs in enumerate(all_segs):
+                    for seg in segs:
+                        fut = self._pool.submit(
+                            _verify_segment_worker, seg.premises, seg.conclusion
+                        )
+                        futures_to_idx[fut] = i
+                break  # all submits succeeded
+            except Exception as exc:
+                _logger.warning(
+                    "Process pool broken on submit (attempt %d/2): %s", attempt + 1, exc
+                )
+                self._pool = None
+                if attempt == 0 and self._try_recreate_pool():
+                    continue  # retry with fresh pool
+                # Permanent failure — fall back to sequential for this and future batches.
+                _logger.warning(
+                    "Falling back to sequential Z3 verification for remainder of training."
+                )
+                return [
+                    self.score(o, t, tt)
+                    for o, t, tt in zip(outputs, targets, task_types)
+                ]
 
         # 3. Collect results, accumulating sound_steps per output index.
         sound_steps = [0] * len(outputs)
