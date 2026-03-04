@@ -1,50 +1,590 @@
 === LoRA Weight SVD Analysis ===
 
 [STAGE0]
-  Total Frobenius norm sum: 57.9495
-  Avg norm — attention modules: 0.1006
-  Avg norm — MLP modules:       0.3487
-  Top-10 (layer, module, norm):
+  Total Frobenius norm sum: 146.3210
+  Avg norm — attention modules: 0.2545
+  Avg norm — MLP modules:       0.8800
+  All (layer, module, norm), sorted descending:
     Layer  37  gate_proj     1.3189
     Layer  38  gate_proj     1.2865
     Layer  36  gate_proj     1.2517
+    Layer  16  gate_proj     1.2299
+    Layer  21  gate_proj     1.2166
+    Layer  22  gate_proj     1.2016
+    Layer  19  gate_proj     1.2013
+    Layer  17  gate_proj     1.1990
     Layer  35  gate_proj     1.1919
     Layer  39  gate_proj     1.1892
     Layer  37  up_proj       1.1839
     Layer  38  up_proj       1.1823
+    Layer  23  gate_proj     1.1728
+    Layer  18  gate_proj     1.1678
+    Layer  20  gate_proj     1.1669
+    Layer  14  gate_proj     1.1405
     Layer  24  gate_proj     1.1214
+    Layer  15  gate_proj     1.1213
     Layer  39  up_proj       1.1178
+    Layer  11  gate_proj     1.1014
+    Layer  12  gate_proj     1.0931
     Layer  34  gate_proj     1.0841
+    Layer  13  gate_proj     1.0733
+    Layer  16  up_proj       1.0580
+    Layer  36  up_proj       1.0558
+    Layer  26  gate_proj     1.0524
+    Layer   7  gate_proj     1.0513
+    Layer   3  gate_proj     1.0495
+    Layer  10  gate_proj     1.0407
+    Layer  32  gate_proj     1.0364
+    Layer  29  gate_proj     1.0336
+    Layer  35  up_proj       1.0327
+    Layer   8  gate_proj     1.0310
+    Layer  27  gate_proj     1.0287
+    Layer  25  gate_proj     1.0277
+    Layer   3  up_proj       1.0065
+    Layer  19  up_proj       1.0035
+    Layer   2  gate_proj     1.0028
+    Layer  18  up_proj       1.0027
+    Layer   9  gate_proj     1.0019
+    Layer  12  up_proj       0.9981
+    Layer  22  up_proj       0.9955
+    Layer  15  up_proj       0.9954
+    Layer  28  gate_proj     0.9929
+    Layer   6  gate_proj     0.9914
+    Layer  33  gate_proj     0.9861
+    Layer   7  up_proj       0.9854
+    Layer  31  gate_proj     0.9799
+    Layer   5  gate_proj     0.9789
+    Layer  14  up_proj       0.9772
+    Layer  21  up_proj       0.9747
+    Layer  17  up_proj       0.9717
+    Layer   6  up_proj       0.9691
+    Layer   5  up_proj       0.9642
+    Layer  20  up_proj       0.9625
+    Layer  30  gate_proj     0.9622
+    Layer  13  up_proj       0.9566
+    Layer  23  up_proj       0.9541
+    Layer  11  up_proj       0.9490
+    Layer  24  up_proj       0.9479
+    Layer   4  gate_proj     0.9470
+    Layer   1  up_proj       0.9466
+    Layer  34  up_proj       0.9459
+    Layer   2  up_proj       0.9356
+    Layer   1  gate_proj     0.9258
+    Layer   0  gate_proj     0.9222
+    Layer  33  up_proj       0.9208
+    Layer   4  up_proj       0.9172
+    Layer   0  up_proj       0.9155
+    Layer   9  up_proj       0.9151
+    Layer  10  up_proj       0.9109
+    Layer  25  up_proj       0.9104
+    Layer  32  up_proj       0.9063
+    Layer  26  up_proj       0.9005
+    Layer  27  up_proj       0.8850
+    Layer  28  up_proj       0.8839
+    Layer   8  up_proj       0.8814
+    Layer  29  up_proj       0.8790
+    Layer  30  up_proj       0.8708
+    Layer  31  up_proj       0.8420
+    Layer   2  down_proj     0.8253
+    Layer   7  down_proj     0.7128
+    Layer   1  down_proj     0.7118
+    Layer   3  down_proj     0.7048
+    Layer   0  down_proj     0.6940
+    Layer  37  down_proj     0.6885
+    Layer  38  down_proj     0.6698
+    Layer   4  down_proj     0.6442
+    Layer  10  down_proj     0.6314
+    Layer  39  down_proj     0.6276
+    Layer   5  down_proj     0.6245
+    Layer   8  down_proj     0.6231
+    Layer  13  down_proj     0.6220
+    Layer  35  down_proj     0.6190
+    Layer  16  down_proj     0.6094
+    Layer  36  down_proj     0.6059
+    Layer   6  down_proj     0.5947
+    Layer   9  down_proj     0.5934
+    Layer  14  down_proj     0.5789
+    Layer  15  down_proj     0.5743
+    Layer  12  down_proj     0.5665
+    Layer  17  down_proj     0.5577
+    Layer  34  down_proj     0.5555
+    Layer  23  down_proj     0.5541
+    Layer  11  down_proj     0.5435
+    Layer  19  down_proj     0.5382
+    Layer  26  down_proj     0.5366
+    Layer  20  down_proj     0.5352
+    Layer  30  down_proj     0.5236
+    Layer  25  down_proj     0.5185
+    Layer  21  down_proj     0.5183
+    Layer  22  down_proj     0.5127
+    Layer  18  down_proj     0.5110
+    Layer  27  down_proj     0.5099
+    Layer  32  down_proj     0.5083
+    Layer  28  down_proj     0.5048
+    Layer  24  down_proj     0.5012
+    Layer  29  down_proj     0.4965
+    Layer  31  down_proj     0.4929
+    Layer  33  down_proj     0.4812
+    Layer   0  q_proj        0.4065
+    Layer   2  q_proj        0.4044
+    Layer   3  q_proj        0.4033
+    Layer  39  o_proj        0.4031
+    Layer   6  q_proj        0.4013
+    Layer   5  q_proj        0.3962
+    Layer  37  q_proj        0.3955
+    Layer   7  q_proj        0.3893
+    Layer   9  q_proj        0.3880
+    Layer   3  o_proj        0.3860
+    Layer  30  q_proj        0.3840
+    Layer  21  q_proj        0.3820
+    Layer  13  q_proj        0.3817
+    Layer  16  q_proj        0.3799
+    Layer  18  q_proj        0.3794
+    Layer  17  q_proj        0.3785
+    Layer  12  q_proj        0.3783
+    Layer  32  q_proj        0.3742
+    Layer  20  q_proj        0.3734
+    Layer  37  o_proj        0.3726
+    Layer  28  q_proj        0.3719
+    Layer  39  q_proj        0.3681
+    Layer  14  q_proj        0.3650
+    Layer  10  q_proj        0.3632
+    Layer  35  q_proj        0.3627
+    Layer  36  o_proj        0.3608
+    Layer  38  o_proj        0.3607
+    Layer  36  q_proj        0.3598
+    Layer   1  q_proj        0.3587
+    Layer   8  q_proj        0.3583
+    Layer  25  q_proj        0.3573
+    Layer  23  q_proj        0.3564
+    Layer  38  q_proj        0.3534
+    Layer  35  o_proj        0.3507
+    Layer  22  q_proj        0.3504
+    Layer  11  q_proj        0.3499
+    Layer  33  q_proj        0.3495
+    Layer  26  q_proj        0.3494
+    Layer  19  q_proj        0.3491
+    Layer  15  q_proj        0.3468
+    Layer   7  o_proj        0.3462
+    Layer  34  o_proj        0.3440
+    Layer   6  o_proj        0.3438
+    Layer  30  o_proj        0.3437
+    Layer  18  o_proj        0.3437
+    Layer  29  q_proj        0.3416
+    Layer  34  q_proj        0.3402
+    Layer  21  o_proj        0.3370
+    Layer  12  o_proj        0.3363
+    Layer  24  q_proj        0.3360
+    Layer  13  o_proj        0.3360
+    Layer  11  o_proj        0.3350
+    Layer  20  o_proj        0.3342
+    Layer   4  q_proj        0.3341
+    Layer  16  o_proj        0.3336
+    Layer  14  o_proj        0.3318
+    Layer   5  o_proj        0.3310
+    Layer  17  o_proj        0.3300
+    Layer  25  o_proj        0.3298
+    Layer  15  o_proj        0.3272
+    Layer  32  o_proj        0.3268
+    Layer  31  q_proj        0.3268
+    Layer   8  o_proj        0.3266
+    Layer  27  q_proj        0.3259
+    Layer  27  o_proj        0.3257
+    Layer  10  o_proj        0.3247
+    Layer   4  o_proj        0.3194
+    Layer  28  o_proj        0.3174
+    Layer  29  o_proj        0.3174
+    Layer   9  o_proj        0.3160
+    Layer  24  o_proj        0.3130
+    Layer   2  o_proj        0.3119
+    Layer  23  o_proj        0.3118
+    Layer  33  o_proj        0.3087
+    Layer  19  o_proj        0.3061
+    Layer   1  o_proj        0.3019
+    Layer  22  o_proj        0.2970
+    Layer  26  o_proj        0.2823
+    Layer   0  o_proj        0.2792
+    Layer  31  o_proj        0.2783
+    Layer  37  k_proj        0.1998
+    Layer  21  k_proj        0.1954
+    Layer  10  k_proj        0.1930
+    Layer  18  k_proj        0.1911
+    Layer  29  k_proj        0.1907
+    Layer  23  k_proj        0.1902
+    Layer  20  k_proj        0.1882
+    Layer  11  k_proj        0.1880
+    Layer  17  k_proj        0.1874
+    Layer   3  k_proj        0.1867
+    Layer  13  k_proj        0.1863
+    Layer  22  k_proj        0.1849
+    Layer  19  k_proj        0.1842
+    Layer  36  k_proj        0.1835
+    Layer   6  k_proj        0.1828
+    Layer   9  k_proj        0.1813
+    Layer  14  k_proj        0.1813
+    Layer  15  k_proj        0.1808
+    Layer  16  k_proj        0.1802
+    Layer  30  k_proj        0.1792
+    Layer  12  k_proj        0.1789
+    Layer  26  k_proj        0.1759
+    Layer  25  k_proj        0.1729
+    Layer   6  v_proj        0.1715
+    Layer  39  k_proj        0.1711
+    Layer  32  k_proj        0.1708
+    Layer   8  k_proj        0.1701
+    Layer  24  k_proj        0.1691
+    Layer   4  v_proj        0.1689
+    Layer  37  v_proj        0.1671
+    Layer  28  k_proj        0.1663
+    Layer  34  k_proj        0.1661
+    Layer  39  v_proj        0.1654
+    Layer  33  k_proj        0.1645
+    Layer   7  k_proj        0.1643
+    Layer  38  k_proj        0.1640
+    Layer  38  v_proj        0.1636
+    Layer   8  v_proj        0.1634
+    Layer  36  v_proj        0.1626
+    Layer  11  v_proj        0.1601
+    Layer  34  v_proj        0.1598
+    Layer   3  v_proj        0.1594
+    Layer  14  v_proj        0.1583
+    Layer  12  v_proj        0.1579
+    Layer  35  k_proj        0.1563
+    Layer   0  k_proj        0.1555
+    Layer  21  v_proj        0.1552
+    Layer   1  k_proj        0.1549
+    Layer  15  v_proj        0.1548
+    Layer  13  v_proj        0.1514
+    Layer  22  v_proj        0.1506
+    Layer  18  v_proj        0.1506
+    Layer   4  k_proj        0.1502
+    Layer  27  k_proj        0.1498
+    Layer   5  v_proj        0.1492
+    Layer   7  v_proj        0.1491
+    Layer   9  v_proj        0.1485
+    Layer  31  k_proj        0.1484
+    Layer  10  v_proj        0.1478
+    Layer  23  v_proj        0.1473
+    Layer  30  v_proj        0.1463
+    Layer  17  v_proj        0.1456
+    Layer   5  k_proj        0.1455
+    Layer  24  v_proj        0.1454
+    Layer  19  v_proj        0.1448
+    Layer  28  v_proj        0.1439
+    Layer  35  v_proj        0.1429
+    Layer  16  v_proj        0.1419
+    Layer  20  v_proj        0.1416
+    Layer  33  v_proj        0.1408
+    Layer  25  v_proj        0.1398
+    Layer   2  k_proj        0.1377
+    Layer  27  v_proj        0.1353
+    Layer  29  v_proj        0.1343
+    Layer  32  v_proj        0.1339
+    Layer  26  v_proj        0.1326
+    Layer  31  v_proj        0.1280
+    Layer   2  v_proj        0.1211
+    Layer   0  v_proj        0.1134
+    Layer   1  v_proj        0.1033
   Singular value concentration:
-    q_proj        top-2/total=0.279  eff_rank=12.21
-    k_proj        top-2/total=0.272  eff_rank=12.50
-    v_proj        top-2/total=0.334  eff_rank=10.48
-    o_proj        top-2/total=0.246  eff_rank=13.24
-    gate_proj     top-2/total=0.277  eff_rank=12.15
-    up_proj       top-2/total=0.222  eff_rank=14.12
-    down_proj     top-2/total=0.366  eff_rank=9.10
+    q_proj        top-2/total=0.293  eff_rank=11.76
+    k_proj        top-2/total=0.287  eff_rank=11.94
+    v_proj        top-2/total=0.332  eff_rank=10.50
+    o_proj        top-2/total=0.249  eff_rank=13.17
+    gate_proj     top-2/total=0.294  eff_rank=11.62
+    up_proj       top-2/total=0.244  eff_rank=13.41
+    down_proj     top-2/total=0.396  eff_rank=8.31
 
 [STAGE1]
-  Total Frobenius norm sum: 84.4507
-  Avg norm — attention modules: 0.1488
-  Avg norm — MLP modules:       0.5053
-  Top-10 (layer, module, norm):
+  Total Frobenius norm sum: 233.4760
+  Avg norm — attention modules: 0.4103
+  Avg norm — MLP modules:       1.3986
+  All (layer, module, norm), sorted descending:
+    Layer   2  down_proj     1.8872
+    Layer   3  gate_proj     1.8414
+    Layer   7  gate_proj     1.7983
+    Layer  21  gate_proj     1.7875
+    Layer  16  gate_proj     1.7870
+    Layer  19  gate_proj     1.7853
+    Layer  20  gate_proj     1.7846
+    Layer   8  gate_proj     1.7666
+    Layer  17  gate_proj     1.7568
+    Layer   6  up_proj       1.7549
+    Layer   2  gate_proj     1.7519
+    Layer   3  up_proj       1.7437
     Layer  37  gate_proj     1.7433
+    Layer  11  gate_proj     1.7388
+    Layer  18  gate_proj     1.7375
+    Layer  15  gate_proj     1.7318
+    Layer  22  gate_proj     1.7261
+    Layer  23  gate_proj     1.7241
+    Layer   1  up_proj       1.7238
+    Layer   6  gate_proj     1.7238
     Layer  36  gate_proj     1.7208
+    Layer  14  gate_proj     1.7189
+    Layer   7  up_proj       1.7180
+    Layer   1  gate_proj     1.7074
+    Layer   5  gate_proj     1.7058
+    Layer  12  gate_proj     1.6970
+    Layer   5  up_proj       1.6935
     Layer  38  gate_proj     1.6817
+    Layer   2  up_proj       1.6799
+    Layer  10  gate_proj     1.6755
+    Layer   4  gate_proj     1.6684
+    Layer   9  gate_proj     1.6647
+    Layer  13  gate_proj     1.6608
+    Layer   4  up_proj       1.6587
+    Layer   0  up_proj       1.6521
+    Layer   0  gate_proj     1.6471
     Layer  35  gate_proj     1.6381
     Layer  24  gate_proj     1.6246
+    Layer   8  up_proj       1.5981
+    Layer   9  up_proj       1.5812
+    Layer  16  up_proj       1.5652
+    Layer  12  up_proj       1.5647
+    Layer  14  up_proj       1.5585
+    Layer  18  up_proj       1.5570
     Layer  37  up_proj       1.5541
+    Layer  11  up_proj       1.5474
     Layer  25  gate_proj     1.5432
     Layer  38  up_proj       1.5422
     Layer  39  gate_proj     1.5396
+    Layer  19  up_proj       1.5390
+    Layer  10  up_proj       1.5357
+    Layer  15  up_proj       1.5345
     Layer  27  gate_proj     1.5245
+    Layer  17  up_proj       1.5201
+    Layer  21  up_proj       1.5170
+    Layer  34  gate_proj     1.5083
+    Layer  26  gate_proj     1.5045
+    Layer  22  up_proj       1.4937
+    Layer  20  up_proj       1.4931
+    Layer  13  up_proj       1.4928
+    Layer  39  up_proj       1.4822
+    Layer  32  gate_proj     1.4735
+    Layer  29  gate_proj     1.4654
+    Layer  28  gate_proj     1.4641
+    Layer  23  up_proj       1.4557
+    Layer  35  up_proj       1.4487
+    Layer  31  gate_proj     1.4433
+    Layer  36  up_proj       1.4415
+    Layer   1  down_proj     1.4323
+    Layer   0  down_proj     1.4321
+    Layer   7  down_proj     1.4097
+    Layer  30  gate_proj     1.4095
+    Layer  24  up_proj       1.4092
+    Layer  33  gate_proj     1.3833
+    Layer  25  up_proj       1.3751
+    Layer  26  up_proj       1.3634
+    Layer   3  down_proj     1.3533
+    Layer  33  up_proj       1.3423
+    Layer  27  up_proj       1.3329
+    Layer  28  up_proj       1.3291
+    Layer  34  up_proj       1.3284
+    Layer  29  up_proj       1.3274
+    Layer  32  up_proj       1.3266
+    Layer  30  up_proj       1.3192
+    Layer   4  down_proj     1.3111
+    Layer  31  up_proj       1.2730
+    Layer   8  down_proj     1.2599
+    Layer   6  down_proj     1.2272
+    Layer   5  down_proj     1.1779
+    Layer  10  down_proj     1.1200
+    Layer   9  down_proj     1.0883
+    Layer  13  down_proj     1.0536
+    Layer  37  down_proj     1.0207
+    Layer   0  q_proj        1.0115
+    Layer  12  down_proj     1.0091
+    Layer  11  down_proj     1.0027
+    Layer  20  down_proj     0.9956
+    Layer  14  down_proj     0.9939
+    Layer  19  down_proj     0.9763
+    Layer  38  down_proj     0.9690
+    Layer  17  down_proj     0.9662
+    Layer  23  down_proj     0.9620
+    Layer  21  down_proj     0.9619
+    Layer  15  down_proj     0.9612
+    Layer  16  down_proj     0.9576
+    Layer  18  down_proj     0.9516
+    Layer  22  down_proj     0.9376
+    Layer  26  down_proj     0.9190
+    Layer  36  down_proj     0.9090
+    Layer  35  down_proj     0.8966
+    Layer  30  down_proj     0.8832
+    Layer  28  down_proj     0.8596
+    Layer  34  down_proj     0.8560
+    Layer  25  down_proj     0.8547
+    Layer  27  down_proj     0.8265
+    Layer  29  down_proj     0.8254
+    Layer  24  down_proj     0.8253
+    Layer  32  down_proj     0.8172
+    Layer  31  down_proj     0.8101
+    Layer  33  down_proj     0.7641
+    Layer  39  down_proj     0.7400
+    Layer   1  q_proj        0.7182
+    Layer   3  o_proj        0.7126
+    Layer   2  q_proj        0.7031
+    Layer   6  q_proj        0.6646
+    Layer   1  o_proj        0.6497
+    Layer   7  q_proj        0.6436
+    Layer   3  q_proj        0.6408
+    Layer   5  q_proj        0.6329
+    Layer   6  o_proj        0.6307
+    Layer   7  o_proj        0.6304
+    Layer   8  q_proj        0.6289
+    Layer   9  q_proj        0.6278
+    Layer   4  o_proj        0.6216
+    Layer   9  o_proj        0.6089
+    Layer   2  o_proj        0.6067
+    Layer   5  o_proj        0.6054
+    Layer   0  o_proj        0.6023
+    Layer  13  q_proj        0.6007
+    Layer   8  o_proj        0.5928
+    Layer  17  q_proj        0.5846
+    Layer  11  q_proj        0.5824
+    Layer  10  q_proj        0.5824
+    Layer  12  q_proj        0.5813
+    Layer  21  q_proj        0.5794
+    Layer   4  q_proj        0.5775
+    Layer  14  q_proj        0.5725
+    Layer  20  q_proj        0.5698
+    Layer  16  q_proj        0.5681
+    Layer  30  q_proj        0.5679
+    Layer  11  o_proj        0.5644
+    Layer  10  o_proj        0.5625
+    Layer  18  q_proj        0.5599
+    Layer  32  q_proj        0.5548
+    Layer  28  q_proj        0.5514
+    Layer  37  q_proj        0.5513
+    Layer  12  o_proj        0.5495
+    Layer  15  q_proj        0.5462
+    Layer  39  o_proj        0.5433
+    Layer  21  o_proj        0.5426
+    Layer  33  q_proj        0.5390
+    Layer  14  o_proj        0.5386
+    Layer  20  o_proj        0.5383
+    Layer  26  q_proj        0.5368
+    Layer  23  q_proj        0.5344
+    Layer  13  o_proj        0.5340
+    Layer  19  q_proj        0.5336
+    Layer  15  o_proj        0.5314
+    Layer  16  o_proj        0.5298
+    Layer  35  q_proj        0.5286
+    Layer  24  q_proj        0.5283
+    Layer  36  q_proj        0.5241
+    Layer  18  o_proj        0.5239
+    Layer  17  o_proj        0.5226
+    Layer  25  q_proj        0.5179
+    Layer  22  q_proj        0.5168
+    Layer  19  o_proj        0.5126
+    Layer  23  o_proj        0.5115
+    Layer  34  q_proj        0.5110
+    Layer  25  o_proj        0.5095
+    Layer  39  q_proj        0.5087
+    Layer  27  o_proj        0.5068
+    Layer  37  o_proj        0.5066
+    Layer  27  q_proj        0.5002
+    Layer  36  o_proj        0.4989
+    Layer  34  o_proj        0.4989
+    Layer  29  o_proj        0.4962
+    Layer  29  q_proj        0.4937
+    Layer  38  q_proj        0.4934
+    Layer  22  o_proj        0.4919
+    Layer  35  o_proj        0.4909
+    Layer  32  o_proj        0.4905
+    Layer  28  o_proj        0.4890
+    Layer  38  o_proj        0.4858
+    Layer  30  o_proj        0.4851
+    Layer  24  o_proj        0.4792
+    Layer  31  q_proj        0.4776
+    Layer  26  o_proj        0.4713
+    Layer  33  o_proj        0.4660
+    Layer  31  o_proj        0.4313
+    Layer   9  k_proj        0.3275
+    Layer   8  k_proj        0.3253
+    Layer   7  k_proj        0.3240
+    Layer   3  k_proj        0.3229
+    Layer  12  k_proj        0.3157
+    Layer   6  k_proj        0.3104
+    Layer  20  k_proj        0.3099
+    Layer  11  k_proj        0.3098
+    Layer   0  k_proj        0.3096
+    Layer  18  k_proj        0.3056
+    Layer  17  k_proj        0.3034
+    Layer   3  v_proj        0.3011
+    Layer  23  k_proj        0.3005
+    Layer   4  v_proj        0.3005
+    Layer  13  k_proj        0.2976
+    Layer   6  v_proj        0.2950
+    Layer   1  v_proj        0.2936
+    Layer  21  k_proj        0.2928
+    Layer  15  k_proj        0.2908
+    Layer  16  k_proj        0.2865
+    Layer   8  v_proj        0.2846
+    Layer  24  k_proj        0.2811
+    Layer  22  k_proj        0.2811
+    Layer  10  k_proj        0.2804
+    Layer   5  v_proj        0.2804
+    Layer   4  k_proj        0.2779
+    Layer  14  k_proj        0.2777
+    Layer  19  k_proj        0.2775
+    Layer  11  v_proj        0.2774
+    Layer   5  k_proj        0.2773
+    Layer   7  v_proj        0.2769
+    Layer  29  k_proj        0.2743
+    Layer   9  v_proj        0.2736
+    Layer   2  k_proj        0.2706
+    Layer  10  v_proj        0.2698
+    Layer   0  v_proj        0.2674
+    Layer  30  k_proj        0.2659
+    Layer  25  k_proj        0.2643
+    Layer   1  k_proj        0.2639
+    Layer   2  v_proj        0.2632
+    Layer  37  k_proj        0.2597
+    Layer  33  k_proj        0.2579
+    Layer  26  k_proj        0.2575
+    Layer  28  k_proj        0.2546
+    Layer  12  v_proj        0.2539
+    Layer  34  k_proj        0.2519
+    Layer  13  v_proj        0.2501
+    Layer  32  k_proj        0.2499
+    Layer  37  v_proj        0.2476
+    Layer  36  k_proj        0.2462
+    Layer  35  k_proj        0.2439
+    Layer  21  v_proj        0.2438
+    Layer  15  v_proj        0.2401
+    Layer  38  k_proj        0.2380
+    Layer  28  v_proj        0.2363
+    Layer  19  v_proj        0.2359
+    Layer  22  v_proj        0.2345
+    Layer  23  v_proj        0.2330
+    Layer  16  v_proj        0.2327
+    Layer  31  k_proj        0.2312
+    Layer  18  v_proj        0.2305
+    Layer  14  v_proj        0.2298
+    Layer  34  v_proj        0.2297
+    Layer  20  v_proj        0.2286
+    Layer  24  v_proj        0.2280
+    Layer  39  k_proj        0.2274
+    Layer  39  v_proj        0.2274
+    Layer  30  v_proj        0.2251
+    Layer  36  v_proj        0.2237
+    Layer  27  k_proj        0.2233
+    Layer  17  v_proj        0.2209
+    Layer  25  v_proj        0.2197
+    Layer  38  v_proj        0.2194
+    Layer  26  v_proj        0.2194
+    Layer  27  v_proj        0.2179
+    Layer  35  v_proj        0.2152
+    Layer  29  v_proj        0.2150
+    Layer  32  v_proj        0.2135
+    Layer  33  v_proj        0.2086
+    Layer  31  v_proj        0.2039
   Singular value concentration:
-    q_proj        top-2/total=0.270  eff_rank=12.50
-    k_proj        top-2/total=0.271  eff_rank=12.45
-    v_proj        top-2/total=0.306  eff_rank=11.46
-    o_proj        top-2/total=0.231  eff_rank=13.79
-    gate_proj     top-2/total=0.270  eff_rank=12.47
-    up_proj       top-2/total=0.219  eff_rank=14.28
-    down_proj     top-2/total=0.347  eff_rank=9.72
+    q_proj        top-2/total=0.292  eff_rank=11.80
+    k_proj        top-2/total=0.297  eff_rank=11.60
+    v_proj        top-2/total=0.305  eff_rank=11.38
+    o_proj        top-2/total=0.236  eff_rank=13.57
+    gate_proj     top-2/total=0.283  eff_rank=12.02
+    up_proj       top-2/total=0.235  eff_rank=13.70
+    down_proj     top-2/total=0.391  eff_rank=8.48
 

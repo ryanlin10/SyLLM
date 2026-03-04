@@ -269,6 +269,7 @@ class GRPOTrainer:
         running_stats: Dict[str, float] = {
             "loss": 0.0, "reward": 0.0, "kl": 0.0, "adv": 0.0,
             "process_reward": 0.0, "outcome_reward": 0.0,
+            "total_segs": 0.0, "sound_segs": 0.0,
         }
 
         for epoch in range(cfg.num_epochs):
@@ -297,14 +298,16 @@ class GRPOTrainer:
                     avg = {k: v / cfg.logging_steps for k, v in running_stats.items()}
                     logger.info(
                         "step=%d  epoch=%d  loss=%.4f  reward=%.4f  "
-                        "verifier=%.4f  outcome=%.4f  kl=%.4f  adv_std=%.4f",
+                        "verifier=%.4f  outcome=%.4f  kl=%.4f  adv_std=%.4f  "
+                        "segs=%d  sound=%d",
                         self.global_step, epoch + 1,
                         avg["loss"], avg["reward"],
                         avg["process_reward"], avg["outcome_reward"],
                         avg["kl"], avg["adv"],
+                        int(avg["total_segs"]), int(avg["sound_segs"]),
                     )
                     if WANDB_AVAILABLE and wandb.run is not None:
-                        log_dict = {f"grpo/{k}": v for k, v in avg.items()}
+                        log_dict = {f"grpo/{k}": v for k, v in avg.items() if k != "batch_rewards"}
                         log_dict["grpo/lr"] = self.scheduler.get_last_lr()[0]
                         wandb.log(log_dict, step=self.global_step)
                     running_stats = {k: 0.0 for k in running_stats}
@@ -604,10 +607,14 @@ class GRPOTrainer:
             all_rewards     = torch.tensor([r.reward          for r in results], dtype=torch.float32, device=self.device)
             process_rewards = torch.tensor([r.process_reward  for r in results], dtype=torch.float32, device=self.device)
             outcome_rewards = torch.tensor([r.outcome_reward  for r in results], dtype=torch.float32, device=self.device)
+            total_segs      = sum(r.total_steps for r in results)
+            sound_segs      = sum(r.sound_steps for r in results)
         else:
             all_rewards     = self._fallback_reward(all_texts, all_targets)
             process_rewards = torch.zeros_like(all_rewards)
             outcome_rewards = all_rewards.clone()
+            total_segs      = 0
+            sound_segs      = 0
 
         # ------------------------------------------------------------------ #
         # 4. Group-relative advantages (normalise within each prompt's group).#
@@ -670,6 +677,8 @@ class GRPOTrainer:
             "batch_rewards":  all_rewards.tolist(),
             "process_reward": process_rewards.mean().item(),
             "outcome_reward": outcome_rewards.mean().item(),
+            "total_segs":     float(total_segs),
+            "sound_segs":     float(sound_segs),
         }
 
     def _compute_log_probs(

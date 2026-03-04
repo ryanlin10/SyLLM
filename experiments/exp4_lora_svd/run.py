@@ -41,6 +41,15 @@ MODULE_GROUP = {
 }
 
 
+def nonzero_layer_summary(norm_grid: np.ndarray) -> str:
+    """Return a compact summary of layers whose row norm is non-zero."""
+    row_sums = norm_grid.sum(axis=1)
+    nz = np.where(row_sums > 0)[0]
+    if len(nz) == 0:
+        return "non-zero layers: none"
+    return f"non-zero layers: {int(nz.min())}-{int(nz.max())} ({len(nz)}/{norm_grid.shape[0]})"
+
+
 def load_lora_weights(path: Path):
     """
     Load LoRA A and B matrices from a safetensors file.
@@ -54,6 +63,10 @@ def load_lora_weights(path: Path):
         for key in keys:
             # Key format: base_model.model.model.layers.{i}.self_attn.{proj}.lora_A.weight
             #          or base_model.model.model.layers.{i}.mlp.{proj}.lora_A.weight
+            # Mistral3 adapters can also include vision_tower LoRA tensors; this
+            # experiment targets language-model blocks only.
+            if ".vision_tower." in key:
+                continue
             if "lora_A" not in key:
                 continue
             parts = key.split(".")
@@ -140,6 +153,10 @@ def plot_heatmap(norm_grid: np.ndarray, title: str, save_path: Path):
     ax.set_ylabel("Layer index")
     ax.set_xlabel("Module")
     ax.set_title(title)
+    ax.text(
+        0.01, 1.01, nonzero_layer_summary(norm_grid),
+        transform=ax.transAxes, fontsize=9, ha="left", va="bottom"
+    )
     plt.colorbar(im, ax=ax, label="‖ΔW‖_F")
     plt.tight_layout()
     plt.savefig(str(save_path), dpi=150)
@@ -159,12 +176,16 @@ def plot_comparison_heatmap(norm0: np.ndarray, norm1: np.ndarray, save_path: Pat
     vmax = max(norm0.max(), norm1.max())
     fig, axes = plt.subplots(1, 3, figsize=(18, max(6, n_layers // 3)))
 
-    for ax, data, label in [(axes[0], norm0, "Stage 0"), (axes[1], norm1, "Stage 1")]:
+    for ax, data, label in [(axes[0], norm0, "Stage 1"), (axes[1], norm1, "Stage 2")]:
         im = ax.imshow(data, aspect="auto", cmap="viridis", vmin=0, vmax=vmax)
         ax.set_xticks(range(len(MODULES)))
         ax.set_xticklabels([MODULE_DISPLAY[m] for m in MODULES], fontsize=9)
         ax.set_ylabel("Layer index")
         ax.set_title(f"{label} ‖ΔW‖_F")
+        ax.text(
+            0.01, 1.01, nonzero_layer_summary(data),
+            transform=ax.transAxes, fontsize=8, ha="left", va="bottom"
+        )
         plt.colorbar(im, ax=ax)
 
     # Difference plot
@@ -173,10 +194,10 @@ def plot_comparison_heatmap(norm0: np.ndarray, norm1: np.ndarray, save_path: Pat
     im3 = axes[2].imshow(diff, aspect="auto", cmap="RdBu_r", vmin=-absmax, vmax=absmax)
     axes[2].set_xticks(range(len(MODULES)))
     axes[2].set_xticklabels([MODULE_DISPLAY[m] for m in MODULES], fontsize=9)
-    axes[2].set_title("Stage1 − Stage0")
+    axes[2].set_title("Stage2 − Stage1")
     plt.colorbar(im3, ax=axes[2], label="Δ‖ΔW‖_F")
 
-    plt.suptitle("Cross-Stage LoRA Frobenius Norm Comparison", fontsize=13)
+    plt.suptitle("Cross-Stage LoRA Frobenius Norm Comparison (Stage 1 vs Stage 2)", fontsize=13)
     plt.tight_layout()
     plt.savefig(str(save_path), dpi=150)
     plt.close()
@@ -193,7 +214,7 @@ def plot_singular_value_spectra(svd0: dict, svd1: dict, save_path: Path):
 
     for idx, module in enumerate(MODULES):
         ax = axes[idx]
-        for svd_data, label, color in [(svd0, "Stage 0", "#2196F3"), (svd1, "Stage 1", "#F44336")]:
+        for svd_data, label, color in [(svd0, "Stage 1", "#2196F3"), (svd1, "Stage 2", "#F44336")]:
             all_svs = [svd_data[(l, module)] for (l, m) in svd_data if m == module]
             if not all_svs:
                 continue
@@ -233,8 +254,8 @@ def plot_per_layer_spectra_for_module(svd0: dict, svd1: dict, module: str, save_
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     for ax, svd_data, stage_label, layers in [
-        (axes[0], svd0, "Stage 0", layers0),
-        (axes[1], svd1, "Stage 1", layers1)
+        (axes[0], svd0, "Stage 1", layers0),
+        (axes[1], svd1, "Stage 2", layers1)
     ]:
         cmap = plt.cm.plasma
         for i, layer in enumerate(layers):
@@ -269,9 +290,9 @@ def main():
     norm1, svd1 = analyse_adapter(weights1, "Stage 1")
 
     # --- Heatmaps ---
-    plot_heatmap(norm0, "Stage 0 — Layer × Module Frobenius Norm ‖ΔW‖_F",
+    plot_heatmap(norm0, "Stage 1 — Layer × Module Frobenius Norm ‖ΔW‖_F",
                  OUT_DIR / "stage0_frobenius_heatmap.png")
-    plot_heatmap(norm1, "Stage 1 — Layer × Module Frobenius Norm ‖ΔW‖_F",
+    plot_heatmap(norm1, "Stage 2 — Layer × Module Frobenius Norm ‖ΔW‖_F",
                  OUT_DIR / "stage1_frobenius_heatmap.png")
     plot_comparison_heatmap(norm0, norm1, OUT_DIR / "cross_stage_comparison_heatmap.png")
 
@@ -284,16 +305,18 @@ def main():
                                           OUT_DIR / f"per_layer_svd_{mod}.png")
 
     # --- Numerical summary ---
-    # Top-10 layers with largest norms (per stage)
+    # Sorted norms for all layer/module pairs (per stage)
     for stage_label, norm_grid in [("stage0", norm0), ("stage1", norm1)]:
         flat = [(norm_grid[l, c], l, MODULES[c])
                 for l in range(norm_grid.shape[0])
                 for c in range(norm_grid.shape[1])]
         flat.sort(reverse=True)
-        results[f"{stage_label}_top10_norms"] = [
+        results[f"{stage_label}_all_norms"] = [
             {"norm": float(n), "layer": l, "module": m}
-            for n, l, m in flat[:10]
+            for n, l, m in flat
         ]
+        # Keep top-10 for quick inspection and backward compatibility.
+        results[f"{stage_label}_top10_norms"] = results[f"{stage_label}_all_norms"][:10]
 
     # Average norm per module type (attn vs mlp)
     for stage_label, norm_grid in [("stage0", norm0), ("stage1", norm1)]:
@@ -336,7 +359,7 @@ def main():
         print(f"  Avg norm (attention): {results[f'{stage}_avg_norm_attn']:.4f}")
         print(f"  Avg norm (MLP):       {results[f'{stage}_avg_norm_mlp']:.4f}")
         print(f"  Top-3 (layer, module):")
-        for entry in results[f"{stage}_top10_norms"][:3]:
+        for entry in results[f"{stage}_all_norms"][:3]:
             print(f"    Layer {entry['layer']:3d} {entry['module']:12s}: {entry['norm']:.4f}")
         print(f"  SV concentration (top-2 ratio):")
         for mod, stats in results[f"{stage}_sv_concentration"].items():
@@ -350,8 +373,8 @@ def main():
             f.write(f"  Total Frobenius norm sum: {results[f'{stage}_total_norm']:.4f}\n")
             f.write(f"  Avg norm — attention modules: {results[f'{stage}_avg_norm_attn']:.4f}\n")
             f.write(f"  Avg norm — MLP modules:       {results[f'{stage}_avg_norm_mlp']:.4f}\n")
-            f.write(f"  Top-10 (layer, module, norm):\n")
-            for entry in results[f"{stage}_top10_norms"]:
+            f.write(f"  All (layer, module, norm), sorted descending:\n")
+            for entry in results[f"{stage}_all_norms"]:
                 f.write(f"    Layer {entry['layer']:3d}  {entry['module']:12s}  {entry['norm']:.4f}\n")
             f.write(f"  Singular value concentration:\n")
             for mod, stats in results[f"{stage}_sv_concentration"].items():
