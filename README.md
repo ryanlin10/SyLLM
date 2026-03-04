@@ -16,7 +16,7 @@
 
 > *What if every inference step an LLM produces could be formally verified? What if the training data itself were provably sound — with no fabricated reasoning, no hallucinated premises, and no broken proof steps?*
 
-SyLLM is an end-to-end research system that fine-tunes LLMs to produce structured, tag-delimited natural deduction proofs — and then verifies every step using a Z3 SMT solver. Training data is generated via **backward proof chain construction**, guaranteeing soundness by construction. Reinforcement learning uses an **outcome-gated process reward** that scores both the correctness of conclusions and the soundness of intermediate reasoning steps.
+SyLLM is an end-to-end research system that fine-tunes LLMs to produce structured, tag-delimited semi-formal language proofs — and then verifies every step using a Z3 SMT solver. Training data is generated via **backward proof chain construction**, guaranteeing soundness by construction. Reinforcement learning uses an **outcome-gated process reward** that scores both the correctness of conclusions and the soundness of intermediate reasoning steps.
 
 ---
 
